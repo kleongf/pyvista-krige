@@ -86,38 +86,80 @@ def execute_on(
     dim: int,
     where: np.ndarray | None,
     drift_arrays: list[np.ndarray] | None = None,
+    max_points: int | None = None,
     **kwargs: object,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Krige onto the points of ``target`` and return flat estimate and variance arrays.
 
     ``drift_arrays`` hold one value per target point and are reshaped to match the
     PyKrige style used. Points excluded by ``where`` hold unspecified values; the
-    caller overwrites them.
+    caller overwrites them. At most ``max_points`` points are kriged per PyKrige
+    call: grids are split into slabs along their slowest axis, and other targets
+    into runs of points.
     """
     axes = grid_axes(target, dim)
     if axes is not None:
         shape = tuple(len(axis) for axis in reversed(axes))
-        if drift_arrays is not None:
-            kwargs['specified_drift_arrays'] = [a.reshape(shape) for a in drift_arrays]
-        if where is None:
-            estimate, sigma2 = instance.execute('grid', *axes, **kwargs)
+        per_slab = int(np.prod(shape[1:]))
+        if max_points is None or target.n_points <= max_points:
+            rows = shape[0]
         else:
-            # PyKrige's mask is True where a node is skipped, shaped (nz, ny, nx).
-            skip = ~where.reshape(shape)
-            estimate, sigma2 = instance.execute('masked', *axes, mask=skip, **kwargs)
-        return np.ma.getdata(estimate).ravel(), np.ma.getdata(sigma2).ravel()
+            rows = max_points // per_slab
+        if rows >= 1:
+            return _execute_grid(instance, axes, shape, rows, where, drift_arrays, kwargs)
 
     estimate = np.full(target.n_points, np.nan)
     sigma2 = np.full(target.n_points, np.nan)
-    selected = np.ones(target.n_points, dtype=bool) if where is None else where
-    if drift_arrays is not None:
-        kwargs['specified_drift_arrays'] = [a[selected] for a in drift_arrays]
-    if selected.any():
-        coords = target.points[selected].T[:dim]
-        est, var = instance.execute('points', *coords, **kwargs)
-        estimate[selected] = np.ma.getdata(est)
-        sigma2[selected] = np.ma.getdata(var)
+    selected = np.flatnonzero(np.ones(target.n_points, dtype=bool) if where is None else where)
+    step = len(selected) if max_points is None else max_points
+    for start in range(0, len(selected), max(step, 1)):
+        chunk = selected[start : start + step]
+        if drift_arrays is not None:
+            kwargs['specified_drift_arrays'] = [a[chunk] for a in drift_arrays]
+        est, var = instance.execute('points', *target.points[chunk].T[:dim], **kwargs)
+        estimate[chunk] = np.ma.getdata(est)
+        sigma2[chunk] = np.ma.getdata(var)
     return estimate, sigma2
+
+
+def _execute_grid(
+    instance: object,
+    axes: tuple[np.ndarray, ...],
+    shape: tuple[int, ...],
+    rows: int,
+    where: np.ndarray | None,
+    drift_arrays: list[np.ndarray] | None,
+    kwargs: dict,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Krige a grid in slabs of ``rows`` along its slowest axis (z in 3D, y in 2D)."""
+    # PyKrige's mask is True where a node is skipped, shaped like the grid.
+    skip = None if where is None else ~where.reshape(shape)
+    drifts = None if drift_arrays is None else [a.reshape(shape) for a in drift_arrays]
+    estimates, variances = [], []
+    for start in range(0, shape[0], rows):
+        part = slice(start, start + rows)
+        slab_axes = (*axes[:-1], axes[-1][part])
+        if drifts is not None:
+            kwargs['specified_drift_arrays'] = [a[part] for a in drifts]
+        if skip is None:
+            est, var = instance.execute('grid', *slab_axes, **kwargs)
+        elif skip[part].all():
+            est = var = np.full(skip[part].shape, np.nan)
+        else:
+            est, var = instance.execute('masked', *slab_axes, mask=skip[part], **kwargs)
+        estimates.append(np.ma.getdata(est))
+        variances.append(np.ma.getdata(var))
+    return np.concatenate(estimates).ravel(), np.concatenate(variances).ravel()
+
+
+def near_samples(
+    sample_points: np.ndarray, target: pv.DataSet, dim: int, max_distance: float
+) -> np.ndarray:
+    """Return whether each target point lies within ``max_distance`` of a sample."""
+    from scipy.spatial import cKDTree  # noqa: PLC0415
+
+    distance, _ = cKDTree(sample_points[:, :dim]).query(target.points[:, :dim])
+    return distance <= max_distance
 
 
 def image_spanning(

@@ -125,6 +125,8 @@ class KrigeAccessor:
         max_memory: float | None = 1e9,
         variance: str | bool = True,
         std: bool = False,
+        max_distance: float | None = None,
+        max_std: float | None = None,
         **kwargs: Any,
     ) -> pv.ImageData:
         """Krige ``scalars`` onto a new image spanning the bounds of this dataset.
@@ -152,13 +154,19 @@ class KrigeAccessor:
             Krige each point from its nearest samples only.
 
         max_memory : float | None, default: 1e9
-            Refuse predictions whose distance matrix exceeds this many bytes.
+            Krige in chunks whose kriging matrix stays under this many bytes.
 
         variance : str | bool, default: True
             Write the kriging variance, optionally under this name.
 
         std : bool, default: False
             Write the standard deviation instead of the variance.
+
+        max_distance : float, optional
+            Skip image points farther than this from every sample.
+
+        max_std : float, optional
+            Null image points whose kriging standard deviation exceeds this.
 
         **kwargs : dict, optional
             Options forwarded to :meth:`fit`.
@@ -184,6 +192,8 @@ class KrigeAccessor:
             max_memory=max_memory,
             variance=variance,
             std=std,
+            max_distance=max_distance,
+            max_std=max_std,
         )
 
     def variogram(

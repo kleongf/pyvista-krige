@@ -170,13 +170,69 @@ def test_predict_rejects_unsupported_backend_options(samples3d, fit_kwargs, pred
         model.predict(pv.PolyData([[1.0, 1.0, 1.0]]), **predict_kwargs)
 
 
-def test_predict_refuses_targets_that_exceed_max_memory(samples2d):
-    model = samples2d.krige.fit('elevation')
-    image = pv.ImageData(dimensions=(100, 100, 1))  # 10_000 points x 41 columns x 8 B
-    with pytest.raises(ValueError, match='n_closest_points'):
-        model.predict(image, max_memory=1_000_000)
-    out = model.predict(image, max_memory=None)
-    assert out.n_points == 10_000
+@pytest.mark.parametrize('fixture', ['samples2d', 'samples3d'])
+@pytest.mark.parametrize('kind', ['image', 'points', 'masked'])
+def test_predict_chunks_to_stay_under_max_memory(request, fixture, kind):
+    samples = request.getfixturevalue(fixture)
+    scalars = samples.array_names[0]
+    model = samples.krige.fit(scalars, variogram_model='spherical')
+    target = pv.ImageData(dimensions=(9, 8, 1 if fixture == 'samples2d' else 6))
+    where = None
+    if kind == 'points':
+        target = target.cast_to_pointset()
+    elif kind == 'masked':
+        where = target.points[:, 0] < 4.5
+    whole = model.predict(target, max_memory=None, where=where)
+    # A budget of a few points' rows forces many chunks.
+    chunked = model.predict(target, max_memory=5 * (model.n_samples + 1) * 8, where=where)
+    np.testing.assert_allclose(chunked[scalars], whole[scalars], equal_nan=True)
+    np.testing.assert_allclose(
+        chunked[f'{scalars} variance'], whole[f'{scalars} variance'], equal_nan=True
+    )
+
+
+def test_predict_chunks_universal_kriging_with_specified_drift(samples2d):
+    samples2d['depth'] = samples2d.points[:, 0]
+    model = samples2d.krige.fit(
+        'elevation', method='universal', variogram_model='linear', specified_drift=['depth']
+    )
+    target = pv.ImageData(dimensions=(7, 6, 1), spacing=(1.5, 2.0, 1.0))
+    target['depth'] = target.points[:, 0]
+    whole = model.predict(target, max_memory=None)
+    chunked = model.predict(target, max_memory=3 * 50 * 8)
+    np.testing.assert_allclose(chunked['elevation'], whole['elevation'])
+
+
+def test_max_distance_skips_points_far_from_every_sample(samples2d):
+    model = samples2d.krige.fit('elevation', variogram_model='spherical')
+    target = pv.PolyData([[5.0, 5.0, 0.0], [40.0, 40.0, 0.0], [10.5, 10.0, 0.0]])
+    out = model.predict(target, max_distance=3.0)
+    np.testing.assert_array_equal(out['vtkValidPointMask'], [1, 0, 1])
+    assert np.isnan(out['elevation'][1])
+    assert np.isnan(out['elevation variance'][1])
+    full = model.predict(target)
+    np.testing.assert_allclose(out['elevation'][[0, 2]], full['elevation'][[0, 2]])
+
+
+def test_max_std_nulls_uncertain_points_and_combines_with_where(samples2d):
+    model = samples2d.krige.fit('elevation', variogram_model='spherical')
+    target = pv.ImageData(dimensions=(30, 30, 1), spacing=(1.0, 1.0, 1.0), origin=(-10, -10, 0))
+    full = model.predict(target, std=True)
+    limit = np.median(full['elevation std'])
+    where = target.points[:, 1] > 0
+    out = model.predict(target, std=True, max_std=limit, where=where)
+    keep = where & (full['elevation std'] <= limit)
+    np.testing.assert_array_equal(out['vtkValidPointMask'], keep.astype(np.uint8))
+    np.testing.assert_allclose(out['elevation'][keep], full['elevation'][keep])
+    assert np.isnan(out['elevation'][~keep]).all()
+
+
+def test_to_image_forwards_extrapolation_masks(samples2d):
+    image = samples2d.krige.to_image(
+        'elevation', dimensions=(20, 20), padding=0.5, max_distance=1.5
+    )
+    mask = image['vtkValidPointMask'].astype(bool)
+    assert 0 < mask.sum() < image.n_points
 
 
 @pytest.mark.parametrize('fixture', ['samples2d', 'samples3d'])

@@ -15,6 +15,7 @@ from pyvista_krige._advanced import imply_drift_terms
 from pyvista_krige._advanced import resolve_dim
 from pyvista_krige._advanced import translate_drift
 from pyvista_krige._targets import execute_on
+from pyvista_krige._targets import near_samples
 from pyvista_krige._targets import resolve_where
 from pyvista_krige._targets import sample_arrays
 from pyvista_krige._variogram import ExperimentalVariogram
@@ -81,6 +82,7 @@ class KrigingModel:
         dim: int,
         n_samples: int,
         drift_names: list[str] | None = None,
+        samples: pv.PolyData | None = None,
         fit_kwargs: dict[str, Any] | None = None,
         experimental: ExperimentalVariogram | None = None,
     ) -> None:
@@ -90,6 +92,7 @@ class KrigingModel:
         self._dim = dim
         self._n_samples = n_samples
         self._drift_names = drift_names
+        self._samples = samples
         self._fit_kwargs = {} if fit_kwargs is None else fit_kwargs
         self._experimental = experimental
 
@@ -160,6 +163,7 @@ class KrigingModel:
             dim=dim,
             n_samples=len(values),
             drift_names=drift_names,
+            samples=_sample_cloud(found, scalars, drift_names),
             fit_kwargs=fit_kwargs,
             experimental=experimental,
         )
@@ -168,6 +172,16 @@ class KrigingModel:
     def dim(self) -> int:
         """Return the spatial dimension of the model, 2 or 3."""
         return self._dim
+
+    @property
+    def n_samples(self) -> int:
+        """Return the number of samples the model was fitted to."""
+        return self._n_samples
+
+    @property
+    def samples(self) -> pv.PolyData | None:
+        """Return the fitted samples as points with the sampled and drift arrays."""
+        return self._samples
 
     @property
     def variogram(self) -> Variogram:
@@ -243,6 +257,7 @@ class KrigingModel:
             dim=self._dim,
             n_samples=self._n_samples,
             drift_names=self._drift_names,
+            samples=self._samples,
             fit_kwargs=fit_kwargs,
         )
 
@@ -261,6 +276,8 @@ class KrigingModel:
         variance: str | bool = True,
         std: bool = False,
         where: str | np.ndarray | None = None,
+        max_distance: float | None = None,
+        max_std: float | None = None,
         null_value: float = np.nan,
     ) -> pv.DataSet:
         """Krige onto the points of ``target`` and return a copy with the estimate.
@@ -283,9 +300,11 @@ class KrigingModel:
             only). Uses the ``'loop'`` backend unless ``backend='C'``.
 
         max_memory : float | None, default: 1e9
-            Without ``n_closest_points`` PyKrige builds a dense distance matrix
-            between targets and samples. Raise before it would exceed this many
-            bytes. ``None`` disables the check.
+            Without ``n_closest_points`` PyKrige builds a dense matrix between
+            targets and samples. Krige in chunks small enough to keep that
+            matrix under this many bytes. Grids are split into slabs along z
+            (y in 2D) so they keep the fast grid path. ``None`` kriges every
+            point in one call.
 
         variance : str | bool, default: True
             Write the kriging variance as ``'<scalars> variance'``, or under
@@ -300,8 +319,18 @@ class KrigingModel:
             where to krige. Other points get ``null_value``, and a
             ``vtkValidPointMask`` array marks the kriged points.
 
+        max_distance : float, optional
+            Skip points farther than this from every sample, in the model's
+            coordinates (x and y only for a 2D model, without anisotropy).
+            Combines with ``where``. Use it to avoid extrapolating.
+
+        max_std : float, optional
+            Null points whose kriging standard deviation exceeds this, after
+            kriging. Combines with ``where`` and ``max_distance``.
+
         null_value : float, default: nan
-            Value written to points excluded by ``where``.
+            Value written to points excluded by ``where``, ``max_distance`` or
+            ``max_std``.
 
         Returns
         -------
@@ -314,8 +343,7 @@ class KrigingModel:
             If ``target`` is a :class:`pyvista.MultiBlock`.
 
         ValueError
-            If the backend options are unsupported for this model, or the
-            distance matrix would exceed ``max_memory``.
+            If the backend options are unsupported for this model.
 
         """
         if isinstance(target, pv.MultiBlock):
@@ -323,17 +351,25 @@ class KrigingModel:
             raise TypeError(msg)
         execute_kwargs = self._execute_kwargs(backend, n_closest_points)
         where = resolve_where(target, where)
-        n_krige = target.n_points if where is None else int(where.sum())
+        if max_distance is not None:
+            near = near_samples(self._samples.points, target, self._dim, max_distance)
+            where = near if where is None else where & near
+        max_points = None
         if n_closest_points is None and max_memory is not None:
-            self._check_memory(n_krige, max_memory)
+            # One float64 per target point and kriging-matrix column.
+            max_points = max(1, int(max_memory // ((self._n_samples + 1) * 8)))
         drift_arrays = None
         if self._drift_names is not None:
             drift_arrays = [
                 np.asarray(target.point_data[name], dtype=float) for name in self._drift_names
             ]
         estimate, sigma2 = execute_on(
-            self._instance, target, self._dim, where, drift_arrays, **execute_kwargs
+            self._instance, target, self._dim, where, drift_arrays, max_points, **execute_kwargs
         )
+        if max_std is not None:
+            # NaN compares False, so points left unkriged count as uncertain.
+            certain = np.sqrt(np.clip(sigma2, 0, None)) <= max_std
+            where = certain if where is None else where & certain
         if std:
             # Round-off can leave tiny negative variances at the samples.
             sigma2 = np.sqrt(np.clip(sigma2, 0, None))
@@ -349,18 +385,6 @@ class KrigingModel:
         if where is not None:
             out.point_data['vtkValidPointMask'] = where.astype(np.uint8)
         return out
-
-    def _check_memory(self, n_points: int, max_memory: float) -> None:
-        """Raise before PyKrige allocates a distance matrix larger than ``max_memory``."""
-        needed = n_points * (self._n_samples + 1) * 8
-        if needed > max_memory:
-            msg = (
-                f'Kriging {n_points} points against {self._n_samples} samples needs about '
-                f'{needed / 1e9:.2f} GB for the distance matrix, more than max_memory '
-                f'({max_memory / 1e9:.2f} GB). Pass n_closest_points to krige with a moving '
-                'window, use a coarser target, or raise max_memory (None disables this check).'
-            )
-            raise ValueError(msg)
 
     def _execute_kwargs(self, backend: str | None, n_closest_points: int | None) -> dict:
         """Validate backend options up front and return PyKrige ``execute`` kwargs."""
@@ -384,6 +408,15 @@ class KrigingModel:
             msg = "n_closest_points requires backend 'loop' (or 'C' for 2D)."
             raise ValueError(msg)
         return {'backend': backend, 'n_closest_points': n_closest_points}
+
+
+def _sample_cloud(found: Any, scalars: str, drift_names: list[str] | None) -> pv.PolyData:
+    """Return the finite samples as points carrying the sampled and drift arrays."""
+    cloud = pv.PolyData(found.points.copy())
+    cloud.point_data[scalars] = found.values
+    for name in drift_names or []:
+        cloud.point_data[name] = found.aligned(name)
+    return cloud
 
 
 def _refit_variogram(
