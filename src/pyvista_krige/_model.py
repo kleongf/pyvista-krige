@@ -9,13 +9,19 @@ from typing import NamedTuple
 import numpy as np
 import pyvista as pv
 
+from pyvista_krige._advanced import detrended
+from pyvista_krige._advanced import drift_matrix
 from pyvista_krige._advanced import imply_drift_terms
 from pyvista_krige._advanced import resolve_dim
 from pyvista_krige._advanced import translate_drift
 from pyvista_krige._targets import execute_on
 from pyvista_krige._targets import resolve_where
 from pyvista_krige._targets import sample_arrays
+from pyvista_krige._variogram import ExperimentalVariogram
 from pyvista_krige._variogram import Variogram
+from pyvista_krige._variogram import experimental_variogram
+from pyvista_krige._variogram import fit_model
+from pyvista_krige._variogram import parameter_dict
 
 # Options of PyKrige's constructors that ``update_variogram_model`` also takes.
 _VARIOGRAM_OPTIONS = (
@@ -76,6 +82,7 @@ class KrigingModel:
         n_samples: int,
         drift_names: list[str] | None = None,
         fit_kwargs: dict[str, Any] | None = None,
+        experimental: ExperimentalVariogram | None = None,
     ) -> None:
         self._instance = instance
         self._scalars = scalars
@@ -84,6 +91,7 @@ class KrigingModel:
         self._n_samples = n_samples
         self._drift_names = drift_names
         self._fit_kwargs = {} if fit_kwargs is None else fit_kwargs
+        self._experimental = experimental
 
     @classmethod
     def fit(
@@ -114,7 +122,8 @@ class KrigingModel:
             Spatial dimension, 2 or 3.
 
         **kwargs : dict, optional
-            Options forwarded to the PyKrige class.
+            Options forwarded to the PyKrige class, plus ``detrend`` and
+            ``max_lag``.
 
         Returns
         -------
@@ -123,17 +132,27 @@ class KrigingModel:
 
         """
         fit_kwargs = dict(kwargs)
+        detrend = kwargs.pop('detrend', False)
+        max_lag = kwargs.pop('max_lag', None)
         found = sample_arrays(samples, scalars)
         points, values = found.points, found.values
         drift_names = translate_drift(found, kwargs)
         if method not in ('ordinary', 'universal'):
             msg = f"method must be 'ordinary' or 'universal', got {method!r}."
             raise ValueError(msg)
+        if detrend and method != 'universal':
+            msg = "detrend needs universal kriging: pass method='universal' and a drift."
+            raise ValueError(msg)
         if method == 'universal':
             imply_drift_terms(kwargs)
         dim = resolve_dim(points, kwargs, dim, method)
         kriging_class = _kriging_class(method, dim)
         instance = kriging_class(*points.T[:dim], values, **kwargs)
+        experimental = None
+        if detrend or max_lag is not None:
+            instance, experimental = _refit_variogram(
+                kriging_class, instance, points[:, :dim], values, kwargs, detrend, max_lag
+            )
         return cls(
             instance,
             scalars,
@@ -142,6 +161,7 @@ class KrigingModel:
             n_samples=len(values),
             drift_names=drift_names,
             fit_kwargs=fit_kwargs,
+            experimental=experimental,
         )
 
     @property
@@ -151,14 +171,24 @@ class KrigingModel:
 
     @property
     def variogram(self) -> Variogram:
-        """Return the experimental variogram and the fitted model."""
+        """Return the experimental variogram and the fitted model.
+
+        With ``detrend=True`` the experimental variogram is that of the drift
+        residuals, which is what the model was fitted to.
+        """
         instance = self._instance
+        lags, semivariance = instance.lags, instance.semivariance
+        counts = None
+        if self._experimental is not None:
+            lags, semivariance = self._experimental.lags, self._experimental.semivariance
+            counts = self._experimental.counts
         return Variogram(
             model_name=instance.variogram_model,
             parameters=np.asarray(instance.variogram_model_parameters, dtype=float),
-            lags=np.asarray(instance.lags, dtype=float),
-            semivariance=np.asarray(instance.semivariance, dtype=float),
+            lags=np.asarray(lags, dtype=float),
+            semivariance=np.asarray(semivariance, dtype=float),
             function=instance.variogram_function,
+            counts=counts,
         )
 
     @property
@@ -204,6 +234,8 @@ class KrigingModel:
         instance = copy.deepcopy(self._instance)
         instance.update_variogram_model(variogram_model, **options)
         fit_kwargs = {**self._fit_kwargs, 'variogram_model': variogram_model, **kwargs}
+        for key in ('detrend', 'max_lag'):
+            fit_kwargs.pop(key, None)
         return KrigingModel(
             instance,
             self._scalars,
@@ -352,6 +384,52 @@ class KrigingModel:
             msg = "n_closest_points requires backend 'loop' (or 'C' for 2D)."
             raise ValueError(msg)
         return {'backend': backend, 'n_closest_points': n_closest_points}
+
+
+def _refit_variogram(
+    kriging_class: type,
+    instance: Any,
+    coords: np.ndarray,
+    values: np.ndarray,
+    kwargs: dict[str, Any],
+    detrend: bool,  # noqa: FBT001
+    max_lag: float | None,
+) -> tuple[Any, ExperimentalVariogram]:
+    """Refit the variogram to the drift residuals and/or lags up to ``max_lag``.
+
+    The experimental variogram is computed in PyKrige's anisotropy-adjusted
+    coordinates, where its variogram model applies. Returns the refitted PyKrige
+    object and the experimental variogram it was fitted to.
+    """
+    variogram_model = kwargs.get('variogram_model', 'linear')
+    if not isinstance(variogram_model, str) or variogram_model == 'custom':
+        msg = (
+            'detrend and max_lag fit the variogram themselves, so they need a named PyKrige '
+            'model, not a GSTools CovModel or a custom function.'
+        )
+        raise ValueError(msg)
+    adjusted = [instance.X_ADJUSTED, instance.Y_ADJUSTED]
+    if coords.shape[1] == 3:
+        adjusted.append(instance.Z_ADJUSTED)
+    adjusted = np.column_stack(adjusted)
+    residuals = detrended(values, drift_matrix(adjusted, kwargs)) if detrend else values
+    if max_lag is None:
+        # PyKrige's own fit spans every pair distance.
+        max_lag = float(np.linalg.norm(np.ptp(adjusted, axis=0)))
+    experimental = experimental_variogram(
+        adjusted, residuals, nlags=kwargs.get('nlags', 6), max_lag=max_lag
+    )
+    if kwargs.get('variogram_parameters') is not None:
+        return instance, experimental
+    parameters = fit_model(
+        variogram_model,
+        experimental.lags,
+        experimental.semivariance,
+        experimental.counts,
+        experimental.max_lag,
+    )
+    refit_kwargs = {**kwargs, 'variogram_parameters': parameter_dict(variogram_model, parameters)}
+    return kriging_class(*coords.T, values, **refit_kwargs), experimental
 
 
 def _kriging_class(method: str, dim: int) -> type:

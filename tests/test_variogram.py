@@ -68,6 +68,78 @@ def test_with_variogram_returns_refitted_model_and_keeps_original(samples2d):
     np.testing.assert_allclose(refit.variogram.model(np.array([2.0])), [1.53125])
 
 
+def trended_field(n=300, seed=3):
+    """Points in a box with a strong linear z trend plus a short-range random field."""
+    rng = np.random.default_rng(seed)
+    points = rng.uniform((0, 0, 0), (20, 20, 10), size=(n, 3))
+    centers = rng.uniform((0, 0, 0), (20, 20, 10), size=(40, 3))
+    bumps = rng.normal(size=40)
+    dist = np.linalg.norm(points[:, None] - centers[None], axis=-1)
+    noise = (bumps * np.exp(-((dist / 2.0) ** 2))).sum(axis=1)
+    samples = pv.PolyData(points)
+    samples['t'] = 10.0 * points[:, 2] + noise
+    samples['noise'] = noise
+    return samples
+
+
+def test_detrend_fits_variogram_to_drift_residuals():
+    samples = trended_field()
+    kwargs = {'variogram_model': 'exponential', 'nlags': 10}
+    raw = samples.krige.fit('t', method='universal', drift_terms=['regional_linear'], **kwargs)
+    detrended = samples.krige.fit(
+        't', method='universal', drift_terms=['regional_linear'], detrend=True, **kwargs
+    )
+    noise_only = samples.krige.fit('noise', **kwargs)
+    sill = detrended.variogram.parameters[0] + detrended.variogram.parameters[2]
+    noise_sill = noise_only.variogram.parameters[0] + noise_only.variogram.parameters[2]
+    raw_sill = raw.variogram.parameters[0] + raw.variogram.parameters[2]
+    assert raw_sill > 20 * noise_sill  # the trend dominates PyKrige's own fit
+    assert sill == pytest.approx(noise_sill, rel=0.5)
+    # The kriging system uses the residual variogram, not just the reported one.
+    np.testing.assert_allclose(
+        detrended.instance.variogram_model_parameters, detrended.variogram.parameters
+    )
+    assert detrended.variogram.semivariance.max() < 0.1 * raw.variogram.semivariance.max()
+
+
+def test_detrend_supports_specified_and_functional_drift():
+    samples = trended_field()
+    samples['depth'] = samples.points[:, 2]
+    specified = samples.krige.fit(
+        't', method='universal', specified_drift=['depth'], detrend=True, nlags=10
+    )
+    functional = samples.krige.fit(
+        't', method='universal', functional_drift=[lambda x, y, z: z], detrend=True, nlags=10
+    )
+    np.testing.assert_allclose(
+        specified.variogram.semivariance, functional.variogram.semivariance, rtol=1e-6
+    )
+
+
+@pytest.mark.parametrize(
+    ('kwargs', 'match'),
+    [
+        ({'detrend': True}, 'detrend needs universal kriging'),
+        ({'method': 'universal', 'detrend': True}, 'detrend needs at least one drift term'),
+    ],
+)
+def test_detrend_rejects_models_without_drift(samples3d, kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        samples3d.krige.fit('temperature', **kwargs)
+
+
+def test_max_lag_trims_long_lags_from_the_fit(samples3d):
+    full = samples3d.krige.fit('temperature', variogram_model='spherical', nlags=8)
+    trimmed = samples3d.krige.fit('temperature', variogram_model='spherical', nlags=8, max_lag=4.0)
+    assert full.variogram.lags.max() > 4.0
+    assert trimmed.variogram.lags.max() <= 4.0
+    assert len(trimmed.variogram.lags) == 8
+    assert trimmed.variogram.counts.sum() > 0
+    np.testing.assert_allclose(
+        trimmed.instance.variogram_model_parameters, trimmed.variogram.parameters
+    )
+
+
 def test_experimental_variogram_matches_brute_force_pairs(samples3d):
     vario = samples3d.krige.variogram('temperature', nlags=5, max_lag=6.0)
     points, values = samples3d.points, samples3d['temperature']

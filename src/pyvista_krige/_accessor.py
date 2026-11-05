@@ -81,6 +81,17 @@ class KrigeAccessor:
               ``external_drift_scalars``. Giving a drift option adds its term
               to ``drift_terms``, which PyKrige otherwise requires.
 
+            Two options are handled here rather than by PyKrige:
+
+            - ``detrend=True`` (universal kriging): fit the variogram to the
+              least-squares residuals of the drift instead of the raw values.
+              PyKrige fits the raw values, so a strong trend inflates the sill
+              and range. Supports the ``regional_linear``, ``specified`` and
+              ``functional`` drift terms.
+            - ``max_lag``: fit the variogram only to pairs closer than this,
+              since long lags have few pairs and often show the trend rather
+              than the correlation. Half the sample extent is a common choice.
+
         Returns
         -------
         KrigingModel
