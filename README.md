@@ -70,7 +70,7 @@ above 150 °C at 50 % and 90 % probability (`pl.krige.add_exceedance`), the 10-f
 errors (`pl.krige.add_residuals`), and horizontal and vertical variograms of the depth-trend
 residuals (`samples.krige.variogram(direction=..., detrend=True)`).
 
-![Thermal probes kriged in 3D](docs/images/thermal_probes.png)
+![Thermal probes kriged in 3D](https://raw.githubusercontent.com/kleongf/pyvista-krige/main/docs/images/thermal_probes.png)
 
 ### Kriging compared with Gaussian-kernel interpolation
 
@@ -81,7 +81,7 @@ cross-validation (`model.cross_validate('loo')`) picks a gaussian variogram. Kri
 about as accurate as the best kernel radius (RMSE 1.23 against 1.15), and it also shows
 where it is unsure.
 
-![Gaussian interpolation compared with kriging](docs/images/saddle_comparison.png)
+![Gaussian interpolation compared with kriging](https://raw.githubusercontent.com/kleongf/pyvista-krige/main/docs/images/saddle_comparison.png)
 
 ### Mount St. Helens from 400 spot elevations
 
@@ -92,7 +92,7 @@ are along the border, where every estimate is extrapolated from samples on one s
 panels show the true and kriged terrain, the variogram, the error, the kriging standard
 deviation, and `pl.krige.add_uncertainty`.
 
-![St. Helens rebuilt by kriging](docs/images/st_helens.png)
+![St. Helens rebuilt by kriging](https://raw.githubusercontent.com/kleongf/pyvista-krige/main/docs/images/st_helens.png)
 
 ### What maps to what
 

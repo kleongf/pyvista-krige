@@ -4,7 +4,7 @@ requires = ['hatchling']
 
 [project]
 name = 'pyvista-krige'
-version = '0.1.0.dev0'
+version = '0.1.0'
 description = 'Kriging for PyVista datasets, powered by PyKrige.'
 readme = 'README.md'
 license = 'MIT'
@@ -25,6 +25,10 @@ dependencies = [
   'scipy>=1.5.4',
 ]
 
+[project.urls]
+Homepage = 'https://github.com/kleongf/pyvista-krige'
+Issues = 'https://github.com/kleongf/pyvista-krige/issues'
+
 [project.optional-dependencies]
 all = ['pyvista-krige[gstools,sklearn]']
 gstools = ['gstools>=1.5']
@@ -38,6 +42,9 @@ krige = 'pyvista_krige._component'
 
 [dependency-groups]
 test = ['pytest>=8', 'pytest-cov']
+
+[tool.hatch.build.targets.sdist]
+exclude = ['.github', 'docs/images']
 
 [tool.hatch.build.targets.wheel]
 packages = ['src/pyvista_krige']
