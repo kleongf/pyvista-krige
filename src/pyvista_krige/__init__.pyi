@@ -6,6 +6,7 @@ from pyvista import DataSet
 from pyvista_krige._accessor import KrigeAccessor as KrigeAccessor
 from pyvista_krige._advanced import CrossValidation as CrossValidation
 from pyvista_krige._component import KrigeComponent as KrigeComponent
+from pyvista_krige._exceedance import exceedance as exceedance
 from pyvista_krige._model import HoldOut as HoldOut
 from pyvista_krige._model import KrigingModel as KrigingModel
 from pyvista_krige._model import Statistics as Statistics
@@ -24,4 +25,5 @@ __all__ = [
     'KrigingModel',
     'Statistics',
     'Variogram',
+    'exceedance',
 ]
