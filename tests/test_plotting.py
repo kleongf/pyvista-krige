@@ -32,3 +32,14 @@ def test_add_uncertainty_handles_variances_far_above_one(samples2d):
     assert not np.array_equal(faded, empty)  # the least certain areas stay faintly visible
     no_fade = render(lambda pl: pl.krige.add_uncertainty(image, 'elevation', min_opacity=1.0))
     np.testing.assert_array_equal(no_fade, opaque)
+
+
+def test_add_variogram_draws_one_series_per_variogram(samples3d):
+    horizontal = samples3d.krige.variogram('temperature', direction='horizontal', nlags=5)
+    vertical = samples3d.krige.variogram('temperature', direction='vertical', nlags=5)
+    model = samples3d.krige.fit('temperature', variogram_model='spherical')
+    pl = pv.Plotter()
+    chart = pl.krige.add_variogram([model, horizontal, vertical])
+    assert len(list(chart.plots('scatter'))) == 3
+    assert len(list(chart.plots('line'))) == 1
+    pl.show()

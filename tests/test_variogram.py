@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import pyvista as pv
 from pykrige.ok import OrdinaryKriging
 
 SPHERICAL = {'sill': 2.0, 'range': 4.0, 'nugget': 0.5}
@@ -65,6 +66,46 @@ def test_with_variogram_returns_refitted_model_and_keeps_original(samples2d):
     assert model.variogram.model_name == 'linear'
     assert refit.variogram.model_name == 'spherical'
     np.testing.assert_allclose(refit.variogram.model(np.array([2.0])), [1.53125])
+
+
+def test_experimental_variogram_matches_brute_force_pairs(samples3d):
+    vario = samples3d.krige.variogram('temperature', nlags=5, max_lag=6.0)
+    points, values = samples3d.points, samples3d['temperature']
+    i, j = np.triu_indices(len(values), k=1)
+    dist = np.linalg.norm(points[i] - points[j], axis=1)
+    gamma = 0.5 * (values[i] - values[j]) ** 2
+    edges = np.linspace(0.0, 6.0, 6)
+    for k in range(5):
+        inside = (dist > edges[k]) & (dist <= edges[k + 1])
+        assert vario.counts[k] == inside.sum()
+        assert vario.semivariance[k] == pytest.approx(gamma[inside].mean())
+        assert vario.lags[k] == pytest.approx(dist[inside].mean())
+
+
+def test_directional_variograms_separate_vertical_and_horizontal_structure():
+    rng = np.random.default_rng(5)
+    points = rng.uniform((0, 0, 0), (20, 20, 20), size=(400, 3))
+    samples = pv.PolyData(points)
+    samples['layered'] = np.sin(points[:, 2] * 1.5)  # varies with z only
+    # Stay under half the period (2.09) so the vertical variogram keeps rising.
+    vertical = samples.krige.variogram('layered', direction='vertical', max_lag=2.0, nlags=2)
+    horizontal = samples.krige.variogram('layered', direction='horizontal', max_lag=2.0, nlags=2)
+    assert vertical.direction == 'vertical'
+    assert np.all(vertical.semivariance > 4 * horizontal.semivariance)
+    x_axis = samples.krige.variogram(
+        'layered', direction=(1, 0, 0), tolerance=5.0, max_lag=2.0, nlags=2
+    )
+    np.testing.assert_allclose(x_axis.semivariance, 0.0, atol=0.02)
+
+
+def test_experimental_variogram_fit_returns_model(samples3d):
+    # The field has a linear trend, so its semivariance grows like a power law.
+    vario = samples3d.krige.variogram('temperature', nlags=8, max_lag=6.0)
+    fitted = vario.fit('power')
+    assert fitted.model_name == 'power'
+    assert fitted.parameters.shape == (3,)
+    residual = fitted.model(vario.lags) - vario.semivariance
+    assert np.sqrt(np.mean(residual**2)) < 0.3 * vario.semivariance.mean()
 
 
 def test_with_variogram_keeps_anisotropy_and_lags(samples3d):

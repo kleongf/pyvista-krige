@@ -8,8 +8,14 @@ from typing import Any
 import pyvista as pv
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyvista_krige._model import KrigingModel
+    from pyvista_krige._variogram import ExperimentalVariogram
     from pyvista_krige._variogram import Variogram
+
+# Series colors for charts with several variograms.
+_COLORS = ('tab:blue', 'tab:orange', 'tab:green', 'tab:purple', 'tab:brown', 'tab:pink')
 
 
 @pv.register_plotter_component('krige')
@@ -28,18 +34,25 @@ class KrigeComponent:
 
     def add_variogram(
         self,
-        variogram: KrigingModel | Variogram,
+        variogram: KrigingModel
+        | Variogram
+        | ExperimentalVariogram
+        | Sequence[KrigingModel | Variogram | ExperimentalVariogram],
         *,
         loc: tuple[float, float] = (0.0, 0.0),
         size: tuple[float, float] = (1.0, 1.0),
         n_model_points: int = 100,
+        labels: Sequence[str] | None = None,
     ) -> pv.Chart2D:
-        """Add a chart of the experimental variogram and the fitted model.
+        """Add a chart of experimental variograms and fitted models.
 
         Parameters
         ----------
-        variogram : KrigingModel | Variogram
-            Fitted model, or its :attr:`KrigingModel.variogram`.
+        variogram : KrigingModel | Variogram | ExperimentalVariogram | sequence
+            Fitted model, its :attr:`KrigingModel.variogram`, an
+            :class:`ExperimentalVariogram` from ``samples.krige.variogram``, or
+            a list of these to compare, such as horizontal and vertical
+            variograms. Experimental variograms are drawn as points only.
 
         loc : sequence[float], default: (0.0, 0.0)
             Lower-left corner of the chart, in normalized viewport coordinates.
@@ -48,7 +61,12 @@ class KrigeComponent:
             Width and height of the chart, in normalized viewport coordinates.
 
         n_model_points : int, default: 100
-            Number of distances at which the model curve is evaluated.
+            Number of distances at which each model curve is evaluated.
+
+        labels : sequence[str], optional
+            Legend label of each variogram. Defaults to ``'Experimental'`` and
+            the model name for a single model, otherwise the direction or model
+            name.
 
         Returns
         -------
@@ -58,11 +76,29 @@ class KrigeComponent:
         """
         import numpy as np  # noqa: PLC0415
 
-        vario = getattr(variogram, 'variogram', variogram)
+        items = list(variogram) if isinstance(variogram, (list, tuple)) else [variogram]
+        items = [getattr(item, 'variogram', item) for item in items]
+        if labels is not None and len(labels) != len(items):
+            msg = f'Got {len(labels)} labels for {len(items)} variograms.'
+            raise ValueError(msg)
         chart = pv.Chart2D(size=size, loc=loc, x_label='Lag distance', y_label='Semivariance')
-        chart.scatter(vario.lags, vario.semivariance, label='Experimental')
-        distances = np.linspace(0.0, vario.lags.max(), n_model_points)
-        chart.line(distances, vario.model(distances), color='r', width=2.0, label=vario.model_name)
+        distances = np.linspace(0.0, max(item.lags.max() for item in items), n_model_points)
+        for k, item in enumerate(items):
+            color = _COLORS[k % len(_COLORS)]
+            fitted = hasattr(item, 'model')
+            if labels is not None:
+                label = labels[k]
+            elif len(items) == 1:
+                label = 'Experimental'
+            else:
+                label = item.model_name if fitted else item.label
+            chart.scatter(item.lags, item.semivariance, color=color, label=label)
+            if fitted:
+                line_label = item.model_name if len(items) == 1 else ''
+                line_color = 'r' if len(items) == 1 else color
+                chart.line(
+                    distances, item.model(distances), color=line_color, width=2.0, label=line_label
+                )
         self._plotter.add_chart(chart)
         return chart
 

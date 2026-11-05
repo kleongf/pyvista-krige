@@ -12,6 +12,7 @@ from pyvista_krige._targets import image_spanning
 if TYPE_CHECKING:
     from pyvista_krige._advanced import CrossValidation
     from pyvista_krige._model import KrigingModel
+    from pyvista_krige._variogram import ExperimentalVariogram
 
 
 @pv.register_dataset_accessor('krige', pv.DataSet)
@@ -172,6 +173,107 @@ class KrigeAccessor:
             max_memory=max_memory,
             variance=variance,
             std=std,
+        )
+
+    def variogram(
+        self,
+        scalars: str,
+        *,
+        nlags: int = 12,
+        max_lag: float | None = None,
+        direction: str | tuple[float, ...] | None = None,
+        tolerance: float = 22.5,
+        bandwidth: float | None = None,
+        dim: int | None = None,
+        detrend: bool = False,
+        **kwargs: Any,
+    ) -> ExperimentalVariogram:
+        """Compute the experimental variogram of ``scalars``, optionally along a direction.
+
+        Comparing directions shows anisotropy. For example, a vertical range
+        a third of the horizontal one suggests ``anisotropy_scaling_z=3`` when
+        fitting. Plot the result with ``pl.krige.add_variogram``.
+
+        Parameters
+        ----------
+        scalars : str
+            Name of the point or cell data array holding the sampled values.
+
+        nlags : int, default: 12
+            Number of equal-width lag bins between 0 and ``max_lag``.
+
+        max_lag : float, optional
+            Largest pair distance used. Defaults to half the diagonal of the
+            samples' bounding box.
+
+        direction : str | sequence[float], optional
+            ``'x'``, ``'y'``, ``'z'`` (or ``'vertical'``), ``'horizontal'``, or
+            a direction vector. By default pairs in every direction are used.
+
+        tolerance : float, default: 22.5
+            Angular tolerance in degrees around ``direction``. For
+            ``'horizontal'``, the largest angle out of the xy plane.
+
+        bandwidth : float, optional
+            Largest distance of a pair from the ``direction`` line.
+
+        dim : int, optional
+            Spatial dimension, 2 or 3. Detected from the samples by default.
+
+        detrend : bool, default: False
+            Use the least-squares residuals of the drift given in ``kwargs``.
+
+        **kwargs : dict, optional
+            Drift options as for :meth:`fit`: ``drift_terms``,
+            ``specified_drift`` and ``functional_drift``.
+
+        Returns
+        -------
+        ExperimentalVariogram
+            Lags, semivariance and pair counts of the non-empty bins.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> import pyvista as pv
+        >>> rng = np.random.default_rng(0)
+        >>> samples = pv.PolyData(rng.uniform(0, 10, (200, 3)))
+        >>> samples['layered'] = np.sin(samples.points[:, 2])
+        >>> vertical = samples.krige.variogram('layered', direction='vertical')
+        >>> horizontal = samples.krige.variogram('layered', direction='horizontal')
+        >>> bool(vertical.semivariance.max() > horizontal.semivariance.max())
+        True
+
+        """
+        from pyvista_krige._advanced import detrended  # noqa: PLC0415
+        from pyvista_krige._advanced import drift_matrix  # noqa: PLC0415
+        from pyvista_krige._advanced import imply_drift_terms  # noqa: PLC0415
+        from pyvista_krige._advanced import resolve_dim  # noqa: PLC0415
+        from pyvista_krige._advanced import translate_drift  # noqa: PLC0415
+        from pyvista_krige._targets import sample_arrays  # noqa: PLC0415
+        from pyvista_krige._variogram import experimental_variogram  # noqa: PLC0415
+
+        found = sample_arrays(self._dataset, scalars)
+        dim = resolve_dim(found.points, {}, dim, 'ordinary')
+        coords = found.points[:, :dim]
+        values = found.values
+        if detrend:
+            translate_drift(found, kwargs)
+            imply_drift_terms(kwargs)
+            # Center the coordinates as PyKrige does before evaluating the drift.
+            center = 0.5 * (coords.min(axis=0) + coords.max(axis=0))
+            values = detrended(values, drift_matrix(coords - center, kwargs))
+        elif kwargs:
+            msg = f'Drift options {sorted(kwargs)} only apply with detrend=True.'
+            raise TypeError(msg)
+        return experimental_variogram(
+            coords,
+            values,
+            nlags=nlags,
+            max_lag=max_lag,
+            direction=direction,
+            tolerance=tolerance,
+            bandwidth=bandwidth,
         )
 
     def regression(

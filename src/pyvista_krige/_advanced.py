@@ -77,6 +77,42 @@ def imply_drift_terms(kwargs: dict[str, Any]) -> None:
         kwargs['drift_terms'] = terms
 
 
+def drift_matrix(coords: np.ndarray, kwargs: dict[str, Any]) -> np.ndarray:
+    """Return the drift design matrix at ``coords``, with a leading column of ones.
+
+    ``coords`` has one column per spatial dimension and should be the coordinates
+    PyKrige evaluates the drift on. ``kwargs`` are translated PyKrige options, with
+    ``specified_drift`` already holding arrays.
+    """
+    columns = [np.ones(len(coords))]
+    for term in kwargs.get('drift_terms') or []:
+        if term == 'regional_linear':
+            columns.extend(coords.T)
+        elif term == 'specified':
+            columns.extend(np.asarray(a, dtype=float) for a in kwargs['specified_drift'])
+        elif term == 'functional':
+            columns.extend(
+                np.broadcast_to(np.asarray(f(*coords.T), dtype=float), len(coords))
+                for f in kwargs['functional_drift']
+            )
+        else:
+            msg = (
+                f'detrend supports the regional_linear, specified and functional drift '
+                f'terms, not {term!r}.'
+            )
+            raise ValueError(msg)
+    if len(columns) == 1:
+        msg = 'detrend needs at least one drift term, such as drift_terms=["regional_linear"].'
+        raise ValueError(msg)
+    return np.column_stack(columns)
+
+
+def detrended(values: np.ndarray, design: np.ndarray) -> np.ndarray:
+    """Return the least-squares residuals of ``values`` on the columns of ``design``."""
+    coefficients = np.linalg.lstsq(design, values, rcond=None)[0]
+    return values - design @ coefficients
+
+
 def resolve_dim(points: np.ndarray, kwargs: dict[str, Any], dim: int | None, method: str) -> int:
     """Choose the spatial dimension and reject option combinations PyKrige cannot fit.
 

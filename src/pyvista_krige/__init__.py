@@ -9,10 +9,12 @@ from pyvista_krige._advanced import CrossValidation
 from pyvista_krige._component import KrigeComponent
 from pyvista_krige._model import KrigingModel
 from pyvista_krige._model import Statistics
+from pyvista_krige._variogram import ExperimentalVariogram
 from pyvista_krige._variogram import Variogram
 
 __all__ = [
     'CrossValidation',
+    'ExperimentalVariogram',
     'KrigeAccessor',
     'KrigeComponent',
     'KrigingModel',

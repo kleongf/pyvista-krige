@@ -8,6 +8,7 @@ from pyvista_krige._advanced import CrossValidation as CrossValidation
 from pyvista_krige._component import KrigeComponent as KrigeComponent
 from pyvista_krige._model import KrigingModel as KrigingModel
 from pyvista_krige._model import Statistics as Statistics
+from pyvista_krige._variogram import ExperimentalVariogram as ExperimentalVariogram
 from pyvista_krige._variogram import Variogram as Variogram
 
 DataSet.krige: KrigeAccessor  # type: ignore[attr-defined]
@@ -15,6 +16,7 @@ BasePlotter.krige: KrigeComponent  # type: ignore[attr-defined]
 
 __all__ = [
     'CrossValidation',
+    'ExperimentalVariogram',
     'KrigeAccessor',
     'KrigeComponent',
     'KrigingModel',
