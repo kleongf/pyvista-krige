@@ -77,7 +77,8 @@ class KrigeAccessor:
               ``specified_drift`` names arrays present on these samples and on
               every prediction target; ``external_drift`` may be a single-layer
               :class:`pyvista.ImageData` with the drift in the array named by
-              ``external_drift_scalars``.
+              ``external_drift_scalars``. Giving a drift option adds its term
+              to ``drift_terms``, which PyKrige otherwise requires.
 
         Returns
         -------

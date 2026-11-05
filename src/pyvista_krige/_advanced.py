@@ -54,6 +54,29 @@ def translate_drift(samples: Samples, kwargs: dict[str, Any]) -> list[str] | Non
     return drift_names
 
 
+# Drift options that PyKrige ignores unless their term is also in ``drift_terms``.
+_IMPLIED_TERMS = {
+    'specified_drift': 'specified',
+    'functional_drift': 'functional',
+    'external_drift': 'external_Z',
+    'point_drift': 'point_log',
+}
+
+
+def imply_drift_terms(kwargs: dict[str, Any]) -> None:
+    """Add the ``drift_terms`` entry for each drift option given in ``kwargs``, in place.
+
+    PyKrige silently ignores ``specified_drift`` and the like unless the matching
+    term is also listed in ``drift_terms``.
+    """
+    terms = list(kwargs.get('drift_terms') or [])
+    for option, term in _IMPLIED_TERMS.items():
+        if kwargs.get(option) is not None and term not in terms:
+            terms.append(term)
+    if terms:
+        kwargs['drift_terms'] = terms
+
+
 def resolve_dim(points: np.ndarray, kwargs: dict[str, Any], dim: int | None, method: str) -> int:
     """Choose the spatial dimension and reject option combinations PyKrige cannot fit.
 
@@ -119,16 +142,18 @@ def regression_kriging(
         model_key = 'regression_model'
     if model is not None:
         kwargs[model_key] = model
-    points = samples.points
+    found = sample_arrays(samples, scalars)
+    points = found.points
     dim = resolve_dim(points, kwargs, dim, method)
     kriging = Kriging(method=_sklearn_method(method, dim), **kwargs)
-    values = np.asarray(samples.point_data[scalars])
+    values = found.values
     if classify:
         # ClassificationKriging one-hot encodes the labels, which needs a column vector.
-        values = values.reshape(-1, 1)
+        values = values.astype(int).reshape(-1, 1)
+    features = np.column_stack([found.aligned(name) for name in predictors])
     # PyKrige reports progress with print(); keep it off the user's stdout.
     with contextlib.redirect_stdout(io.StringIO()):
-        kriging.fit(predictor_matrix(samples, predictors), points[:, :dim], values)
+        kriging.fit(features, points[:, :dim], values)
         estimate = kriging.predict(predictor_matrix(target, predictors), target.points[:, :dim])
     out = target.copy()
     out.point_data[scalars] = estimate

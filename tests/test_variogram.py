@@ -65,3 +65,12 @@ def test_with_variogram_returns_refitted_model_and_keeps_original(samples2d):
     assert model.variogram.model_name == 'linear'
     assert refit.variogram.model_name == 'spherical'
     np.testing.assert_allclose(refit.variogram.model(np.array([2.0])), [1.53125])
+
+
+def test_with_variogram_keeps_anisotropy_and_lags(samples3d):
+    model = samples3d.krige.fit(
+        'temperature', variogram_model='linear', anisotropy_scaling_z=2.0, nlags=9
+    )
+    refit = model.with_variogram('spherical')
+    assert refit.instance.anisotropy_scaling_z == 2.0
+    assert len(refit.variogram.lags) == 9

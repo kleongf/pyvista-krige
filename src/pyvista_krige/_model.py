@@ -9,12 +9,28 @@ from typing import NamedTuple
 import numpy as np
 import pyvista as pv
 
+from pyvista_krige._advanced import imply_drift_terms
 from pyvista_krige._advanced import resolve_dim
 from pyvista_krige._advanced import translate_drift
 from pyvista_krige._targets import execute_on
 from pyvista_krige._targets import resolve_where
 from pyvista_krige._targets import sample_arrays
 from pyvista_krige._variogram import Variogram
+
+# Options of PyKrige's constructors that ``update_variogram_model`` also takes.
+_VARIOGRAM_OPTIONS = (
+    'variogram_parameters',
+    'variogram_function',
+    'nlags',
+    'weight',
+    'anisotropy_scaling',
+    'anisotropy_angle',
+    'anisotropy_scaling_y',
+    'anisotropy_scaling_z',
+    'anisotropy_angle_x',
+    'anisotropy_angle_y',
+    'anisotropy_angle_z',
+)
 
 
 class Statistics(NamedTuple):
@@ -59,6 +75,7 @@ class KrigingModel:
         dim: int,
         n_samples: int,
         drift_names: list[str] | None = None,
+        fit_kwargs: dict[str, Any] | None = None,
     ) -> None:
         self._instance = instance
         self._scalars = scalars
@@ -66,6 +83,7 @@ class KrigingModel:
         self._dim = dim
         self._n_samples = n_samples
         self._drift_names = drift_names
+        self._fit_kwargs = {} if fit_kwargs is None else fit_kwargs
 
     @classmethod
     def fit(
@@ -104,12 +122,15 @@ class KrigingModel:
             The fitted model.
 
         """
+        fit_kwargs = dict(kwargs)
         found = sample_arrays(samples, scalars)
         points, values = found.points, found.values
         drift_names = translate_drift(found, kwargs)
         if method not in ('ordinary', 'universal'):
             msg = f"method must be 'ordinary' or 'universal', got {method!r}."
             raise ValueError(msg)
+        if method == 'universal':
+            imply_drift_terms(kwargs)
         dim = resolve_dim(points, kwargs, dim, method)
         kriging_class = _kriging_class(method, dim)
         instance = kriging_class(*points.T[:dim], values, **kwargs)
@@ -120,6 +141,7 @@ class KrigingModel:
             dim=dim,
             n_samples=len(values),
             drift_names=drift_names,
+            fit_kwargs=fit_kwargs,
         )
 
     @property
@@ -166,7 +188,8 @@ class KrigingModel:
 
         **kwargs : dict, optional
             Options forwarded to PyKrige's ``update_variogram_model``, such as
-            ``variogram_parameters`` or ``nlags``.
+            ``variogram_parameters`` or ``nlags``. Anisotropy, ``nlags`` and
+            ``weight`` default to this model's.
 
         Returns
         -------
@@ -174,8 +197,13 @@ class KrigingModel:
             The refitted model. This model is unchanged.
 
         """
+        options = {k: v for k, v in self._fit_kwargs.items() if k in _VARIOGRAM_OPTIONS}
+        options.pop('variogram_parameters', None)
+        options.pop('variogram_function', None)
+        options.update(kwargs)
         instance = copy.deepcopy(self._instance)
-        instance.update_variogram_model(variogram_model, **kwargs)
+        instance.update_variogram_model(variogram_model, **options)
+        fit_kwargs = {**self._fit_kwargs, 'variogram_model': variogram_model, **kwargs}
         return KrigingModel(
             instance,
             self._scalars,
@@ -183,6 +211,7 @@ class KrigingModel:
             dim=self._dim,
             n_samples=self._n_samples,
             drift_names=self._drift_names,
+            fit_kwargs=fit_kwargs,
         )
 
     @property

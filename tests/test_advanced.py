@@ -200,3 +200,54 @@ def test_sklearn_methods_explain_how_to_install_the_extra(samples2d, monkeypatch
         samples.krige.regression(samples, 'elevation', predictors=['slope'])
     with pytest.raises(ImportError, match=r'pyvista-krige\[sklearn\]'):
         samples.krige.cross_validate('elevation', {'variogram_model': ['linear']})
+
+
+@pytest.mark.parametrize('dim', [2, 3])
+def test_specified_and_functional_drift_imply_their_drift_terms(samples3d, dim):
+    samples3d['depth'] = samples3d.points[:, 2]
+    named = samples3d.krige.fit(
+        'temperature',
+        method='universal',
+        dim=dim,
+        variogram_model='linear',
+        drift_terms=['specified'],
+        specified_drift=['depth'],
+    )
+    implied = samples3d.krige.fit(
+        'temperature',
+        method='universal',
+        dim=dim,
+        variogram_model='linear',
+        specified_drift=['depth'],
+    )
+    assert implied.instance.specified_drift
+    target = pv.PolyData([[1.0, 2.0, 3.0], [9.0, 1.0, 0.5]])
+    target['depth'] = target.points[:, 2]
+    np.testing.assert_allclose(
+        implied.predict(target)['temperature'], named.predict(target)['temperature']
+    )
+    functional = samples3d.krige.fit(
+        'temperature',
+        method='universal',
+        dim=dim,
+        variogram_model='linear',
+        functional_drift=[(lambda x, y, z: z) if dim == 3 else (lambda x, y: x)],
+    )
+    assert functional.instance.functional_drift
+
+
+def test_regression_kriging_drops_nan_samples_like_fit(samples2d):
+    pytest.importorskip('sklearn')
+    from sklearn.linear_model import LinearRegression
+
+    samples2d['x'] = samples2d.points[:, 0]
+    values = samples2d['elevation'].copy()
+    values[[2, 9]] = np.nan
+    samples2d['elevation'] = values
+    target = pv.PolyData([[1.0, 1.0, 0.0], [6.0, 3.0, 0.0]])
+    target['x'] = target.points[:, 0]
+    with pytest.warns(UserWarning, match='Dropping 2 samples'):
+        out = samples2d.krige.regression(
+            target, 'elevation', predictors=['x'], regression_model=LinearRegression()
+        )
+    assert np.isfinite(out['elevation']).all()
