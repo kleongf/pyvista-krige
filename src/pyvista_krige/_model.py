@@ -66,6 +66,37 @@ class Statistics(NamedTuple):
     residuals: np.ndarray
 
 
+class HoldOut(NamedTuple):
+    """Cross-validation errors of a kriging model, from :meth:`KrigingModel.cross_validate`.
+
+    Attributes
+    ----------
+    rmse : float
+        Root-mean-square hold-out error.
+
+    mae : float
+        Mean absolute hold-out error.
+
+    bias : float
+        Mean hold-out error (estimate minus observed); ideally close to 0.
+
+    samples : pyvista.PolyData
+        The samples, with ``'<scalars> error'`` (estimate minus observed) and
+        ``'<scalars> z-score'`` (error over the kriging standard deviation; its
+        spread is ideally close to 1) point arrays.
+
+    scalars : str
+        Name of the sampled array.
+
+    """
+
+    rmse: float
+    mae: float
+    bias: float
+    samples: pv.PolyData
+    scalars: str
+
+
 class KrigingModel:
     """A kriging model fitted to scattered samples.
 
@@ -261,6 +292,73 @@ class KrigingModel:
             fit_kwargs=fit_kwargs,
         )
 
+    def cross_validate(
+        self,
+        folds: int | str = 5,
+        *,
+        seed: int = 0,
+        **kwargs: Any,
+    ) -> HoldOut:
+        """Score this model by refitting it with each fold of samples held out.
+
+        Every fold refits the model with the same options, including
+        ``detrend`` and ``max_lag``, and predicts the held-out samples. Works for
+        every method and dimension, and needs no extra packages.
+
+        Parameters
+        ----------
+        folds : int | str, default: 5
+            Number of folds, assigned at random, or ``'loo'`` to hold out one
+            sample at a time.
+
+        seed : int, default: 0
+            Seed for the random fold assignment.
+
+        **kwargs : dict, optional
+            Options forwarded to :meth:`predict`, such as ``n_closest_points``.
+
+        Returns
+        -------
+        HoldOut
+            Error statistics and the samples with per-sample errors.
+
+        """
+        samples, scalars, n = self._samples, self._scalars, self._n_samples
+        if folds == 'loo':
+            assignment = np.arange(n)
+        elif isinstance(folds, (int, np.integer)) and 2 <= folds <= n:
+            assignment = np.random.default_rng(seed).permutation(n) % folds
+        else:
+            msg = f"folds must be 'loo' or an integer from 2 to {n}, got {folds!r}."
+            raise ValueError(msg)
+        estimate = np.empty(n)
+        variance = np.empty(n)
+        for fold in np.unique(assignment):
+            test = assignment == fold
+            model = KrigingModel.fit(
+                _subset(samples, ~test),
+                scalars,
+                method=self._method,
+                dim=self._dim,
+                **self._fit_kwargs,
+            )
+            out = model.predict(_subset(samples, test), **kwargs)
+            estimate[test] = out[scalars]
+            variance[test] = out[f'{scalars} variance']
+        out = samples.copy()
+        error = estimate - samples[scalars]
+        std = np.sqrt(np.clip(variance, 0, None))
+        out[f'{scalars} error'] = error
+        with np.errstate(divide='ignore', invalid='ignore'):
+            out[f'{scalars} z-score'] = error / std
+        return HoldOut(
+            rmse=float(np.sqrt(np.mean(error**2))),
+            mae=float(np.mean(np.abs(error))),
+            bias=float(np.mean(error)),
+            samples=out,
+            scalars=scalars,
+        )
+
     @property
     def instance(self) -> Any:
         """Return the underlying PyKrige object."""
@@ -417,6 +515,14 @@ def _sample_cloud(found: Any, scalars: str, drift_names: list[str] | None) -> pv
     for name in drift_names or []:
         cloud.point_data[name] = found.aligned(name)
     return cloud
+
+
+def _subset(cloud: pv.PolyData, mask: np.ndarray) -> pv.PolyData:
+    """Return the points of ``cloud`` selected by ``mask``, with their point arrays."""
+    part = pv.PolyData(cloud.points[mask])
+    for name in cloud.point_data:
+        part.point_data[name] = cloud.point_data[name][mask]
+    return part
 
 
 def _refit_variogram(
