@@ -81,7 +81,7 @@ class KrigeAccessor:
               ``external_drift_scalars``. Giving a drift option adds its term
               to ``drift_terms``, which PyKrige otherwise requires.
 
-            Two options are handled here rather than by PyKrige:
+            Three options are handled here rather than by PyKrige:
 
             - ``detrend=True`` (universal kriging): fit the variogram to the
               least-squares residuals of the drift instead of the raw values.
@@ -91,6 +91,26 @@ class KrigeAccessor:
             - ``max_lag``: fit the variogram only to pairs closer than this,
               since long lags have few pairs and often show the trend rather
               than the correlation. Half the sample extent is a common choice.
+            - ``anisotropy='auto'``: estimate the anisotropy from directional
+              variograms and pass it to PyKrige, instead of comparing the
+              variograms by hand and setting the ``anisotropy_*`` options.
+              The nugget and sill come from the omnidirectional variogram.
+              The range is then fitted along eight horizontal directions to
+              find the major axis and the ratio of the horizontal ranges, and
+              along z for 3D samples. Read the result from
+              :attr:`KrigingModel.anisotropy`. It needs a bounded
+              ``variogram_model`` (``'gaussian'``, ``'spherical'``,
+              ``'exponential'`` or ``'hole-effect'``, not PyKrige's default
+              ``'linear'``) and cannot be combined with the ``anisotropy_*``
+              options, a GSTools model or ``coordinates_type='geographic'``.
+              The estimate uses the drift residuals with ``detrend=True``,
+              ``nlags`` lag bins, and pairs up to ``max_lag``. Tilted
+              anisotropy is not estimated, so ``anisotropy_angle_x`` and
+              ``_y`` stay 0. The estimate is noisy with fewer than a few
+              hundred samples. Combine it with ``max_lag``, which fits the
+              variogram of the adjusted coordinates to short lags only.
+              :meth:`KrigingModel.cross_validate` estimates the anisotropy
+              again in every fold.
 
         Returns
         -------
@@ -107,6 +127,15 @@ class KrigeAccessor:
         >>> model = samples.krige.fit('height', variogram_model='spherical')
         >>> model.dim
         2
+
+        The variation of ``height`` is along x only, so the correlation reaches
+        further along y.
+
+        >>> model = samples.krige.fit(
+        ...     'height', variogram_model='spherical', anisotropy='auto'
+        ... )
+        >>> bool(model.anisotropy['anisotropy_scaling'] > 1)
+        True
 
         """
         from pyvista_krige._model import KrigingModel  # noqa: PLC0415
@@ -213,7 +242,8 @@ class KrigeAccessor:
 
         Comparing directions shows anisotropy. For example, a vertical range
         a third of the horizontal one suggests ``anisotropy_scaling_z=3`` when
-        fitting. Plot the result with ``pl.krige.add_variogram``.
+        fitting. ``fit(..., anisotropy='auto')`` makes this comparison for you.
+        Plot the result with ``pl.krige.add_variogram``.
 
         Parameters
         ----------

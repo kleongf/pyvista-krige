@@ -107,6 +107,7 @@ deviation, and `pl.krige.add_uncertainty`.
 | GSTools `CovModel` | `variogram_model=gs.Matern(dim=3, ...)` |
 | (not in PyKrige) variogram of the drift residuals | `fit(..., method='universal', detrend=True)` |
 | (not in PyKrige) fit only short lags | `fit(..., max_lag=...)` |
+| (not in PyKrige) estimate geometric anisotropy | `fit(..., variogram_model='spherical', anisotropy='auto')`, read back as `model.anisotropy` |
 | (not in PyKrige) directional variograms | `dataset.krige.variogram(scalars, direction='vertical')`, `.fit(model)` |
 | (not in PyKrige) k-fold / leave-one-out scoring of any model | `model.cross_validate(5)` or `'loo'`, `pl.krige.add_residuals(holdout)` |
 | (not in PyKrige) extrapolation limits | `predict(..., max_distance=..., max_std=...)` |

@@ -63,7 +63,7 @@ def test_estimate_recovers_angle_and_ratio_of_a_2d_field():
     scaling = np.array([fit['anisotropy_scaling'] for fit in fits])
     assert set(fits[0]) == {'anisotropy_scaling', 'anisotropy_angle'}
     assert all(angle_error(fit['anisotropy_angle'], 30.0) < 20.0 for fit in fits)
-    # Directional variograms blur the axes together, so the estimate runs low.
+    # One field gives a ratio from about 1.5 to 5 for a true ratio of 3.
     assert np.all((scaling > 1.4) & (scaling < 5.0))
     assert 1.8 < np.median(scaling) < 4.5
 
