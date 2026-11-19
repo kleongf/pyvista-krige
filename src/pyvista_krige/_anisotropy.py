@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 
 from pyvista_krige._variogram import ExperimentalVariogram
@@ -15,6 +17,8 @@ BOUNDED_MODELS = ('gaussian', 'spherical', 'exponential', 'hole-effect')
 _AZIMUTHS = np.arange(0.0, 180.0, 22.5)
 _TOLERANCE = 22.5
 _MIN_DIRECTIONS = 3
+# A range this close to max_lag is pinned at the bound, not measured.
+_SATURATED = 0.99
 
 
 def estimate_anisotropy(
@@ -79,7 +83,9 @@ def estimate_anisotropy(
     major, minor, angle = _fit_ellipse(
         np.array(directions), np.array(ranges), np.array(weights), max_lag
     )
+    pinned = ['every horizontal direction'] if minor >= _SATURATED * max_lag else []
     if ndim == 2:
+        _warn_pinned(pinned, max_lag)
         return {'anisotropy_scaling': major / minor, 'anisotropy_angle': angle}
 
     vertical = _directional_range(
@@ -91,11 +97,29 @@ def estimate_anisotropy(
             'max_lag, or set anisotropy_scaling_z manually.'
         )
         raise ValueError(msg)
+    if vertical[0] >= _SATURATED * max_lag:
+        pinned.append('the vertical')
+    _warn_pinned(pinned, max_lag)
     return {
         'anisotropy_scaling_y': major / minor,
         'anisotropy_scaling_z': major / vertical[0],
         'anisotropy_angle_z': angle,
     }
+
+
+def _warn_pinned(pinned: list[str], max_lag: float) -> None:
+    """Warn when the minor or vertical range sits at ``max_lag``, so its ratio means nothing.
+
+    A pinned major range only understates the anisotropy, so it passes silently.
+    """
+    if pinned:
+        msg = (
+            f'The variogram range reaches max_lag ({max_lag:g}) along {" and ".join(pinned)}, '
+            'so the samples do not show where the correlation ends and the estimated '
+            'anisotropy is unreliable. Try detrend=True for a trend, a larger max_lag, or set '
+            'the anisotropy options manually.'
+        )
+        warnings.warn(msg, UserWarning, stacklevel=6)
 
 
 def _directional_range(

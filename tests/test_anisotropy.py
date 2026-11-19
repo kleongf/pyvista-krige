@@ -290,3 +290,14 @@ def test_grid_search_cross_validate_rejects_auto_anisotropy(anisotropic2d):
         anisotropic2d.krige.cross_validate(
             'value', {'variogram_model': ['spherical']}, anisotropy='auto'
         )
+
+
+def test_fit_warns_when_a_depth_trend_pins_ranges_at_max_lag():
+    # A pure depth trend leaves no correlation length to measure within max_lag.
+    rng = np.random.default_rng(0)
+    points = rng.uniform(0, 100, (300, 3)) * [1, 1, 0.3]
+    samples = pv.PolyData(points)
+    samples['value'] = 2.0 * points[:, 2] + rng.normal(0, 1, 300)
+    with pytest.warns(UserWarning, match='reaches max_lag') as record:
+        samples.krige.fit('value', variogram_model='spherical', anisotropy='auto', max_lag=40.0)
+    assert record[0].filename == __file__
