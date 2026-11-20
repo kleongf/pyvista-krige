@@ -135,6 +135,7 @@ lowers the standard deviation along the border, as the right panel shows.
 | (not in PyKrige) where to take the next samples | `model.suggest_samples(target, n, where=..., min_spacing=...)` |
 | (not in PyKrige) declustering weights for clustered samples | `dataset.krige.decluster(cell_size)` or `.decluster(scalars=...)` to choose the cell size by scanning, `dataset.krige.decluster_scan(scalars)` for the scan table |
 | (not in PyKrige) tune a variogram by eye | `pl.krige.add_variogram_widget(model, preview)` adds sliders for the parameters, re-krigs a coarse `preview` as you drag, and gives the tuned model through `callback=` or `pl.krige.variogram_widget_model`. |
+| (not in PyKrige) skewed data | `fit(..., transform='log')` or `'normal_score'`. `predict` and `cross_validate` report the estimate, variance and errors in the original units. Pass `model=` to `exceedance`. |
 | (not in PyKrige) anisotropy geometry | `pl.krige.add_anisotropy_ellipsoid(model)` |
 | `RegressionKriging`, `ClassificationKriging` | `dataset.krige.regression(...)`, `dataset.krige.classify(...)` |
 | `Krige` + `GridSearchCV` | `dataset.krige.cross_validate(scalars, param_grid)` |
@@ -142,6 +143,7 @@ lowers the standard deviation along the border, as the right panel shows.
 Results follow PyVista's filter conventions:
 - A new dataset is returned, and the input is never modified.
 - The estimate goes in `point_data[scalars]` and the variance in `point_data['<scalars> variance']`.
+- With `transform=`, both are in the original units, and the values kriged in the transformed space go in `'<scalars> transformed'` and `'<scalars> transformed variance'`.
 - Points skipped with `where=`, `max_distance=` or `max_std=` get `null_value`, and a `vtkValidPointMask` array is written.
 
 ### Declustering

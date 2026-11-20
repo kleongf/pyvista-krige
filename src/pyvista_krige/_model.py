@@ -20,6 +20,8 @@ from pyvista_krige._targets import execute_on
 from pyvista_krige._targets import near_samples
 from pyvista_krige._targets import resolve_where
 from pyvista_krige._targets import sample_arrays
+from pyvista_krige._transform import Transform
+from pyvista_krige._transform import fit_transform
 from pyvista_krige._variogram import ExperimentalVariogram
 from pyvista_krige._variogram import Variogram
 from pyvista_krige._variogram import experimental_variogram
@@ -116,6 +118,7 @@ class KrigingModel:
         samples: pv.PolyData | None = None,
         fit_kwargs: dict[str, Any] | None = None,
         experimental: ExperimentalVariogram | None = None,
+        transform: Transform | None = None,
     ) -> None:
         self._instance = instance
         self._scalars = scalars
@@ -126,6 +129,7 @@ class KrigingModel:
         self._samples = samples
         self._fit_kwargs = {} if fit_kwargs is None else fit_kwargs
         self._experimental = experimental
+        self._transform = transform
 
     @classmethod
     def fit(
@@ -135,6 +139,8 @@ class KrigingModel:
         *,
         method: str = 'ordinary',
         dim: int | None = None,
+        transform: str | None = None,
+        transform_limits: tuple[float | None, float | None] | None = None,
         **kwargs: Any,
     ) -> KrigingModel:
         """Fit a model to the ``scalars`` array of ``samples``.
@@ -155,6 +161,12 @@ class KrigingModel:
         dim : int, optional
             Spatial dimension, 2 or 3.
 
+        transform : str, optional
+            ``'log'`` or ``'normal_score'`` to krige transformed values.
+
+        transform_limits : tuple[float | None, float | None], optional
+            Lower and upper limits of the normal score distribution.
+
         **kwargs : dict, optional
             Options forwarded to the PyKrige class, plus ``detrend``,
             ``max_lag`` and ``anisotropy``.
@@ -166,6 +178,8 @@ class KrigingModel:
 
         """
         fit_kwargs = dict(kwargs)
+        if transform is not None:
+            fit_kwargs.update(transform=transform, transform_limits=transform_limits)
         detrend = kwargs.pop('detrend', False)
         max_lag = kwargs.pop('max_lag', None)
         anisotropy = kwargs.pop('anisotropy', None)
@@ -174,6 +188,9 @@ class KrigingModel:
             raise ValueError(msg)
         found = sample_arrays(samples, scalars)
         points, values = found.points, found.values
+        fitted_transform = fit_transform(transform, values, transform_limits)
+        if fitted_transform is not None:
+            values = fitted_transform.forward(values)
         drift_names = translate_drift(found, kwargs)
         if method not in ('ordinary', 'universal'):
             msg = f"method must be 'ordinary' or 'universal', got {method!r}."
@@ -203,6 +220,7 @@ class KrigingModel:
             samples=_sample_cloud(found, scalars, drift_names),
             fit_kwargs=fit_kwargs,
             experimental=experimental,
+            transform=fitted_transform,
         )
 
     @property
@@ -217,15 +235,29 @@ class KrigingModel:
 
     @property
     def samples(self) -> pv.PolyData | None:
-        """Return the fitted samples as points with the sampled and drift arrays."""
+        """Return the fitted samples as points with the sampled and drift arrays.
+
+        The sampled values are in their original units, before any transform.
+        """
         return self._samples
+
+    @property
+    def transform(self) -> Transform | None:
+        """Return the transform the values were kriged in, or ``None``.
+
+        A :class:`LogTransform` or :class:`NormalScoreTransform`, fitted to the
+        samples. Its ``forward`` maps values to the kriged space and its
+        ``back`` maps an estimate and variance back to the original units.
+        """
+        return self._transform
 
     @property
     def variogram(self) -> Variogram:
         """Return the experimental variogram and the fitted model.
 
         With ``detrend=True`` the experimental variogram is that of the drift
-        residuals, which is what the model was fitted to.
+        residuals, which is what the model was fitted to. With a ``transform``
+        it is that of the transformed values.
         """
         instance = self._instance
         lags, semivariance = instance.lags, instance.semivariance
@@ -257,6 +289,8 @@ class KrigingModel:
     @property
     def statistics(self) -> Statistics:
         """Return PyKrige's cross-validation statistics of the fit.
+
+        With a ``transform`` they are computed on the transformed values.
 
         Raises
         ------
@@ -315,6 +349,7 @@ class KrigingModel:
             drift_names=self._drift_names,
             samples=self._samples,
             fit_kwargs=fit_kwargs,
+            transform=self._transform,
         )
 
     def cross_validate(
@@ -328,7 +363,9 @@ class KrigingModel:
 
         Every fold refits the model with the same options, including
         ``detrend`` and ``max_lag``, and predicts the held-out samples. Works for
-        every method and dimension, and needs no extra packages.
+        every method and dimension, and needs no extra packages. With a
+        ``transform``, each fold refits the transform to its own samples, and
+        the errors are in the original units.
 
         Parameters
         ----------
@@ -473,6 +510,12 @@ class KrigingModel:
         targets use PyKrige's fast grid path; every other dataset is kriged
         point by point.
 
+        With a ``transform``, the estimate and variance are the mean and
+        variance of the back-transformed distribution, in the original units.
+        The kriged values in the transformed space are also written, as
+        ``'<scalars> transformed'`` and ``'<scalars> transformed variance'``
+        (or ``std``), for :func:`pyvista_krige.exceedance`.
+
         Parameters
         ----------
         target : pyvista.DataSet
@@ -513,7 +556,8 @@ class KrigingModel:
 
         max_std : float, optional
             Null points whose kriging standard deviation exceeds this, after
-            kriging. Combines with ``where`` and ``max_distance``.
+            kriging and in the original units. Combines with ``where`` and
+            ``max_distance``.
 
         null_value : float, default: nan
             Value written to points excluded by ``where``, ``max_distance`` or
@@ -553,18 +597,24 @@ class KrigingModel:
         estimate, sigma2 = execute_on(
             self._instance, target, self._dim, where, drift_arrays, max_points, **execute_kwargs
         )
+        transformed = None
+        if self._transform is not None:
+            transformed = estimate, sigma2
+            estimate, sigma2 = self._transform.back(estimate, sigma2)
         if max_std is not None:
             # NaN compares False, so points left unkriged count as uncertain.
             certain = np.sqrt(np.clip(sigma2, 0, None)) <= max_std
             where = certain if where is None else where & certain
-        if std:
-            # Round-off can leave tiny negative variances at the samples.
-            sigma2 = np.sqrt(np.clip(sigma2, 0, None))
         out = target.copy()
         arrays = {self._scalars: estimate}
         if variance:
-            suffix = 'std' if std else 'variance'
-            arrays[variance if isinstance(variance, str) else f'{self._scalars} {suffix}'] = sigma2
+            name = variance if isinstance(variance, str) else _uncertainty_name(self._scalars, std)
+            arrays[name] = _uncertainty(sigma2, std)
+        if transformed is not None:
+            name = f'{self._scalars} transformed'
+            arrays[name] = transformed[0]
+            if variance:
+                arrays[_uncertainty_name(name, std)] = _uncertainty(transformed[1], std)
         for name, values in arrays.items():
             if where is not None:
                 values[~where] = null_value
@@ -595,6 +645,17 @@ class KrigingModel:
             msg = "n_closest_points requires backend 'loop' (or 'C' for 2D)."
             raise ValueError(msg)
         return {'backend': backend, 'n_closest_points': n_closest_points}
+
+
+def _uncertainty_name(scalars: str, std: bool) -> str:  # noqa: FBT001
+    """Return the default name of the variance or standard deviation of ``scalars``."""
+    return f'{scalars} {"std" if std else "variance"}'
+
+
+def _uncertainty(sigma2: np.ndarray, std: bool) -> np.ndarray:  # noqa: FBT001
+    """Return the kriging variance, or its square root when ``std`` is set."""
+    # Round-off can leave tiny negative variances at the samples.
+    return np.sqrt(np.clip(sigma2, 0, None)) if std else sigma2
 
 
 def _sample_cloud(found: Any, scalars: str, drift_names: list[str] | None) -> pv.PolyData:

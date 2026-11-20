@@ -16,6 +16,8 @@ from pyvista_krige._io import write_zmap
 from pyvista_krige._model import HoldOut
 from pyvista_krige._model import KrigingModel
 from pyvista_krige._model import Statistics
+from pyvista_krige._transform import LogTransform
+from pyvista_krige._transform import NormalScoreTransform
 from pyvista_krige._variogram import ExperimentalVariogram
 from pyvista_krige._variogram import Variogram
 
@@ -27,6 +29,8 @@ __all__ = [
     'KrigeAccessor',
     'KrigeComponent',
     'KrigingModel',
+    'LogTransform',
+    'NormalScoreTransform',
     'Statistics',
     'Variogram',
     'exceedance',

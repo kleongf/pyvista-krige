@@ -248,6 +248,8 @@ def cross_validate(
         'external_drift',
         'detrend',
         'max_lag',
+        'transform',
+        'transform_limits',
         'anisotropy',
     } & set(kwargs)
     if dataset_options:
