@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from typing import TYPE_CHECKING
 from typing import Any
 from typing import NamedTuple
 
@@ -27,6 +28,9 @@ from pyvista_krige._variogram import Variogram
 from pyvista_krige._variogram import experimental_variogram
 from pyvista_krige._variogram import fit_model
 from pyvista_krige._variogram import parameter_dict
+
+if TYPE_CHECKING:
+    import os
 
 # PyKrige's anisotropy options of 2D and 3D models, as attributes of its instances.
 _ANISOTROPY_2D = ('anisotropy_scaling', 'anisotropy_angle')
@@ -484,6 +488,71 @@ class KrigingModel:
 
         """
         return pick_samples(self, target, n, where=where, min_spacing=min_spacing)
+
+    def save(self, path: str | os.PathLike) -> None:
+        """Save this fitted model to a ``.npz`` file.
+
+        The file holds the samples, the fit options, the fitted variogram
+        parameters and anisotropy, and the fitted transform, as plain arrays
+        and JSON. It never stores code, so :meth:`load` cannot run any.
+
+        Parameters
+        ----------
+        path : str | os.PathLike
+            File to write. It is written as given, with no extension added.
+
+        Raises
+        ------
+        TypeError
+            If the model has a custom variogram function, a GSTools
+            ``CovModel``, a ``functional_drift``, or a fit option that is not
+            a JSON value or an array.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> import pyvista as pv
+        >>> import pyvista_krige
+        >>> samples = pv.PolyData(
+        ...     np.random.default_rng(0).uniform(0, 10, (20, 3)) * [1, 1, 0]
+        ... )
+        >>> samples['v'] = samples.points[:, 0]
+        >>> model = samples.krige.fit('v', variogram_model='spherical')
+        >>> model.save('model.npz')  # doctest: +SKIP
+        >>> model = pyvista_krige.KrigingModel.load('model.npz')  # doctest: +SKIP
+
+        """
+        from pyvista_krige._persist import save_model  # noqa: PLC0415
+
+        save_model(self, path)
+
+    @classmethod
+    def load(cls, path: str | os.PathLike) -> KrigingModel:
+        """Load a model saved with :meth:`save`, without fitting it again.
+
+        The loaded model predicts exactly like the saved one. Loading reads
+        only arrays and JSON, so an untrusted file cannot run code.
+
+        Parameters
+        ----------
+        path : str | os.PathLike
+            File written by :meth:`save`.
+
+        Returns
+        -------
+        KrigingModel
+            The loaded model.
+
+        Raises
+        ------
+        ValueError
+            If the file is not a saved model, or was saved in a format version
+            this pyvista-krige does not read.
+
+        """
+        from pyvista_krige._persist import load_model  # noqa: PLC0415
+
+        return load_model(path)
 
     @property
     def instance(self) -> Any:
