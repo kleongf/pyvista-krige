@@ -112,6 +112,7 @@ deviation, and `pl.krige.add_uncertainty`.
 | (not in PyKrige) k-fold / leave-one-out scoring of any model | `model.cross_validate(5)` or `'loo'`, `pl.krige.add_residuals(holdout)` |
 | (not in PyKrige) extrapolation limits | `predict(..., max_distance=..., max_std=...)` |
 | (not in PyKrige) exceedance probability | `pyvista_krige.exceedance(result, scalars, threshold)`, `pl.krige.add_exceedance(...)` |
+| (not in PyKrige) declustering weights for clustered samples | `dataset.krige.decluster(cell_size)` or `.decluster(scalars=...)` to choose the cell size by scanning, `dataset.krige.decluster_scan(scalars)` for the scan table |
 | (not in PyKrige) anisotropy geometry | `pl.krige.add_anisotropy_ellipsoid(model)` |
 | `RegressionKriging`, `ClassificationKriging` | `dataset.krige.regression(...)`, `dataset.krige.classify(...)` |
 | `Krige` + `GridSearchCV` | `dataset.krige.cross_validate(scalars, param_grid)` |
@@ -120,6 +121,23 @@ Results follow PyVista's filter conventions:
 - A new dataset is returned, and the input is never modified.
 - The estimate goes in `point_data[scalars]` and the variance in `point_data['<scalars> variance']`.
 - Points skipped with `where=`, `max_distance=` or `max_std=` get `null_value`, and a `vtkValidPointMask` array is written.
+
+### Declustering
+
+Extra samples near a find skew the mean and the histogram. Cell declustering weights each
+sample by 1 over the number of samples in its cell, averaged over shifted grids.
+
+```python
+# A cell size you choose, or a scan for the one with the lowest declustered mean.
+weighted = samples.krige.decluster(cell_size=500.0)
+weighted = samples.krige.decluster(scalars='grade')
+scan = samples.krige.decluster_scan('grade')  # scan.cell_sizes, scan.means, scan.best
+
+mean = np.average(weighted['grade'], weights=weighted['declustering weight'])
+```
+
+If the samples are clustered where the values are low, pass `maximize=True`. For layered 3D
+samples use a flat cell such as `cell_size=(500, 500, 20)` or `aspect=(1, 1, 0.1)` when scanning.
 
 ### Memory
 
