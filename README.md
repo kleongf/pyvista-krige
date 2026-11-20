@@ -120,6 +120,25 @@ Results follow PyVista's filter conventions:
 - The estimate goes in `point_data[scalars]` and the variance in `point_data['<scalars> variance']`.
 - Points skipped with `where=`, `max_distance=` or `max_std=` get `null_value`, and a `vtkValidPointMask` array is written.
 
+### Grid files
+
+ESRI ASCII (`.asc`) and ZMAP Plus grids read into an `ImageData` with the values as point
+data, and null cells become NaN. The writers take a one-layer `ImageData` and the name of a
+point array.
+
+```python
+import pyvista_krige
+
+dem = pyvista_krige.read_esri_ascii('dem.asc')  # point data 'values' at the cell centers
+pyvista_krige.write_esri_ascii(kriged, 'out.asc', 'elevation')
+surface = pyvista_krige.read_zmap('surface.zmap')
+pyvista_krige.write_zmap(kriged, 'out.zmap', 'elevation')
+```
+
+ESRI ASCII handles corner and center registration, `cellsize` or `dx` and `dy`, and rows
+stored from north to south. ZMAP header bounds are read as node coordinates, and values are
+read column by column from the top.
+
 ### Memory
 
 Without `n_closest_points`, PyKrige builds a dense matrix between the target points and

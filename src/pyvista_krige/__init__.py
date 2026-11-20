@@ -8,6 +8,10 @@ from pyvista_krige._accessor import KrigeAccessor
 from pyvista_krige._advanced import CrossValidation
 from pyvista_krige._component import KrigeComponent
 from pyvista_krige._exceedance import exceedance
+from pyvista_krige._io import read_esri_ascii
+from pyvista_krige._io import read_zmap
+from pyvista_krige._io import write_esri_ascii
+from pyvista_krige._io import write_zmap
 from pyvista_krige._model import HoldOut
 from pyvista_krige._model import KrigingModel
 from pyvista_krige._model import Statistics
@@ -24,4 +28,8 @@ __all__ = [
     'Statistics',
     'Variogram',
     'exceedance',
+    'read_esri_ascii',
+    'read_zmap',
+    'write_esri_ascii',
+    'write_zmap',
 ]
