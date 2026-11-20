@@ -15,6 +15,11 @@ _NODES = np.linspace(-6.0, 6.0, 81)
 _WEIGHTS = np.exp(-(_NODES**2) / 2)
 _WEIGHTS /= _WEIGHTS.sum()
 
+# Normal scores have unit variance, so smaller kriging variances are round-off
+# of the kriging solve. Left in, they would shift the mean at a sample by about
+# their standard deviation, through the kink in the table there.
+_ROUND_OFF = 1e-8
+
 
 class LogTransform:
     """Natural logarithm, for positive, lognormally distributed data.
@@ -119,7 +124,7 @@ class NormalScoreTransform:
         Integrates over the normal distribution of the score at each point by
         quadrature. A zero variance gives the inverse transform.
         """
-        std = np.sqrt(np.clip(variance, 0, None))
+        std = np.sqrt(np.where(variance > _ROUND_OFF, variance, 0.0))
         mean = np.zeros_like(estimate, dtype=float)
         square = np.zeros_like(mean)
         for node, weight in zip(_NODES, _WEIGHTS, strict=True):

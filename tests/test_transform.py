@@ -90,6 +90,16 @@ def test_normal_score_round_trip_at_the_samples(values):
     np.testing.assert_allclose(variance, 0.0, atol=1e-9)
 
 
+def test_normal_score_back_transform_ignores_round_off_variance():
+    values = np.array([1.0, 2.0, 5.0, 9.0, 30.0])
+    transform = NormalScoreTransform.from_samples(values)
+    scores = transform.forward(values)
+    # PyKrige leaves variances of this size at the samples of a zero-nugget model.
+    back, variance = transform.back(scores, np.full_like(scores, 2e-10))
+    np.testing.assert_allclose(back, values, rtol=1e-12)
+    np.testing.assert_allclose(variance, 0.0, atol=1e-9)
+
+
 def test_normal_scores_are_standard_normal_and_ties_share_a_score():
     values = np.repeat(np.arange(1.0, 101.0), 2)
     scores = NormalScoreTransform.from_samples(values).forward(values)
