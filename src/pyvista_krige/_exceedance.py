@@ -11,13 +11,20 @@ if TYPE_CHECKING:
     from pyvista_krige._model import KrigingModel
 
 
+def attributes(result: pv.DataSet, name: str) -> pv.DataSetAttributes:
+    """Return the point data of ``result`` if it holds array ``name``, else its cell data."""
+    if name in result.point_data or name not in result.cell_data:
+        return result.point_data
+    return result.cell_data
+
+
 def uncertainty_name(result: pv.DataSet, scalars: str, variance: str | None) -> str:
     """Return the variance or std array name, defaulting to what ``predict`` writes."""
     if variance is not None:
         return variance
     for suffix in ('variance', 'std'):
         name = f'{scalars} {suffix}'
-        if name in result.point_data:
+        if name in result.point_data or name in result.cell_data:
             return name
     msg = (
         f"No '{scalars} variance' or '{scalars} std' array found. Predict with variance "
@@ -32,7 +39,7 @@ def kriging_std(result: pv.DataSet, name: str, *, std: bool | None = None) -> np
     With ``std=None`` an array whose name ends in ``' std'`` is a standard
     deviation and any other is a variance.
     """
-    values = np.asarray(result.point_data[name], dtype=float)
+    values = np.asarray(attributes(result, name)[name], dtype=float)
     if std is None:
         std = name.endswith(' std')
     # Round-off can leave tiny negative variances at the samples.
@@ -94,7 +101,8 @@ def exceedance(
     Returns
     -------
     pyvista.DataSet
-        Copy of ``result`` with the probability as point data.
+        Copy of ``result`` with the probability as point data, or as cell
+        data when the estimate is cell data.
 
     Raises
     ------
@@ -128,7 +136,8 @@ def exceedance(
     from scipy.stats import norm  # noqa: PLC0415
 
     transform = None if model is None else model.transform
-    if transform is None and f'{scalars} transformed' in result.point_data:
+    data = attributes(result, scalars)
+    if transform is None and f'{scalars} transformed' in data:
         msg = (
             f"result holds '{scalars} transformed', so it was predicted by a transformed model. "
             'Pass that model as model= to compute the probability in the transformed space.'
@@ -139,11 +148,11 @@ def exceedance(
             msg = 'variance and std cannot be set with a transformed model.'
             raise ValueError(msg)
         kriged = f'{scalars} transformed'
-        mean = np.asarray(result.point_data[kriged], dtype=float)
+        mean = np.asarray(data[kriged], dtype=float)
         sigma = kriging_std(result, uncertainty_name(result, kriged, None))
         cutoff = float(transform.forward(threshold))
     else:
-        mean = np.asarray(result.point_data[scalars], dtype=float)
+        mean = np.asarray(data[scalars], dtype=float)
         sigma = kriging_std(result, uncertainty_name(result, scalars, variance), std=std)
         cutoff = threshold
     with np.errstate(divide='ignore', invalid='ignore'):
@@ -155,5 +164,5 @@ def exceedance(
     if name is None:
         name = f'P({scalars} {"<" if below else ">"} {threshold:g})'
     out = result.copy()
-    out.point_data[name] = probability
+    attributes(out, scalars)[name] = probability
     return out

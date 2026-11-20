@@ -68,14 +68,34 @@ def sample_arrays(samples: pv.DataSet, scalars: str) -> Samples:
     return Samples(points[keep], values[keep], data, keep)
 
 
-def resolve_where(target: pv.DataSet, where: str | np.ndarray | None) -> np.ndarray | None:
-    """Return ``where`` as a boolean array over the points of ``target``, or ``None``."""
+def cell_centers(target: pv.DataSet) -> pv.DataSet:
+    """Return a dataset with one point at the center of each cell of ``target``, in cell order.
+
+    The centers of an axis-aligned ``ImageData`` or ``RectilinearGrid`` form a
+    ``RectilinearGrid``, so kriging them keeps PyKrige's fast grid path. VTK
+    numbers structured cells x-fastest, like structured points.
+    """
+    axes = grid_axes(target, 3)
+    if axes is None:
+        return pv.PolyData(target.cell_centers().points)
+    # An axis with one point is flat: its cells sit on that coordinate.
+    return pv.RectilinearGrid(*(0.5 * (a[:-1] + a[1:]) if a.size > 1 else a for a in axes))
+
+
+def resolve_where(
+    target: pv.DataSet, where: str | np.ndarray | None, preference: str = 'point'
+) -> np.ndarray | None:
+    """Return ``where`` as a boolean array over the points or cells of ``target``, or ``None``."""
     if where is None:
         return None
-    mask = target.point_data[where] if isinstance(where, str) else where
+    if preference == 'cell':
+        data, size = target.cell_data, target.n_cells
+    else:
+        data, size = target.point_data, target.n_points
+    mask = data[where] if isinstance(where, str) else where
     mask = np.asarray(mask, dtype=bool).ravel()
-    if mask.size != target.n_points:
-        msg = f'where must have one value per target point ({target.n_points}), got {mask.size}.'
+    if mask.size != size:
+        msg = f'where must have one value per target {preference} ({size}), got {mask.size}.'
         raise ValueError(msg)
     return mask
 

@@ -32,6 +32,7 @@ mutate samples-misaligned  $T 'return Samples(points[keep], values[keep], data, 
 mutate grid-ravel-order    $T 'return np.concatenate(estimates).ravel(), np.concatenate(variances).ravel()' "return np.concatenate(estimates).ravel(order='F'), np.concatenate(variances).ravel(order='F')"
 mutate chunk-off-by-one    $T 'chunk = selected[start : start + step]' 'chunk = selected[start : start + step - 1]'
 mutate grid-slab-overlap   $T 'part = slice(start, start + rows)' 'part = slice(max(start - 1, 0), max(start - 1, 0) + rows)'
+mutate cell-corner-not-center $T 'return pv.RectilinearGrid(*(0.5 * (a[:-1] + a[1:]) if a.size > 1 else a for a in axes))' 'return pv.RectilinearGrid(*(a[:-1] if a.size > 1 else a for a in axes))'
 mutate where-mask-inverted $T 'skip = None if where is None else ~where.reshape(shape)' 'skip = None if where is None else where.reshape(shape)'
 mutate exceedance-tail     $E 'probability = norm.sf(' 'probability = norm.cdf('
 mutate exceedance-below    $E 'probability = 1.0 - probability' 'probability = probability'
