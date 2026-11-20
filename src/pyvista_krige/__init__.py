@@ -7,6 +7,7 @@ from pyvista_krige import _component  # noqa: F401  registers ``Plotter.krige``
 from pyvista_krige._accessor import KrigeAccessor
 from pyvista_krige._advanced import CrossValidation
 from pyvista_krige._component import KrigeComponent
+from pyvista_krige._decluster import DeclusterScan
 from pyvista_krige._exceedance import exceedance
 from pyvista_krige._io import read_esri_ascii
 from pyvista_krige._io import read_zmap
@@ -20,6 +21,7 @@ from pyvista_krige._variogram import Variogram
 
 __all__ = [
     'CrossValidation',
+    'DeclusterScan',
     'ExperimentalVariogram',
     'HoldOut',
     'KrigeAccessor',

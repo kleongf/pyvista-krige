@@ -6,6 +6,7 @@ from pyvista import DataSet
 from pyvista_krige._accessor import KrigeAccessor as KrigeAccessor
 from pyvista_krige._advanced import CrossValidation as CrossValidation
 from pyvista_krige._component import KrigeComponent as KrigeComponent
+from pyvista_krige._decluster import DeclusterScan as DeclusterScan
 from pyvista_krige._exceedance import exceedance as exceedance
 from pyvista_krige._io import read_esri_ascii as read_esri_ascii
 from pyvista_krige._io import read_zmap as read_zmap
@@ -22,6 +23,7 @@ BasePlotter.krige: KrigeComponent  # type: ignore[attr-defined]
 
 __all__ = [
     'CrossValidation',
+    'DeclusterScan',
     'ExperimentalVariogram',
     'HoldOut',
     'KrigeAccessor',
