@@ -49,6 +49,16 @@ pl.add_mesh(kriged.contour(5, scalars='temperature (C)'), opacity=0.5)
 pl.krige.add_exceedance(kriged, 'temperature (C)', 150.0, probability=0.9)
 pl.krige.add_variogram(model, loc=(0.62, 0.62), size=(0.36, 0.36))
 pl.show()
+
+# Tune the variogram by eye. Sliders retune it and re-krige a coarse preview.
+coarse = pv.ImageData(
+    dimensions=(15, 19, 25), spacing=(1000, 1000, 200), origin=(329700, 4252600, -2700)
+)
+coarse['depth'] = coarse.points[:, 2]  # the drift array the model was fitted with
+pl = pv.Plotter()
+pl.krige.add_variogram_widget(model, coarse)
+pl.show()
+tuned = pl.krige.variogram_widget_model
 ```
 
 ## Gallery
@@ -124,6 +134,7 @@ lowers the standard deviation along the border, as the right panel shows.
 | (not in PyKrige) exceedance probability | `pyvista_krige.exceedance(result, scalars, threshold)`, `pl.krige.add_exceedance(...)` |
 | (not in PyKrige) where to take the next samples | `model.suggest_samples(target, n, where=..., min_spacing=...)` |
 | (not in PyKrige) declustering weights for clustered samples | `dataset.krige.decluster(cell_size)` or `.decluster(scalars=...)` to choose the cell size by scanning, `dataset.krige.decluster_scan(scalars)` for the scan table |
+| (not in PyKrige) tune a variogram by eye | `pl.krige.add_variogram_widget(model, preview)` adds sliders for the parameters, re-krigs a coarse `preview` as you drag, and gives the tuned model through `callback=` or `pl.krige.variogram_widget_model`. |
 | (not in PyKrige) anisotropy geometry | `pl.krige.add_anisotropy_ellipsoid(model)` |
 | `RegressionKriging`, `ClassificationKriging` | `dataset.krige.regression(...)`, `dataset.krige.classify(...)` |
 | `Krige` + `GridSearchCV` | `dataset.krige.cross_validate(scalars, param_grid)` |
