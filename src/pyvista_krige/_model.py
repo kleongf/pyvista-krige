@@ -14,6 +14,7 @@ from pyvista_krige._advanced import drift_matrix
 from pyvista_krige._advanced import imply_drift_terms
 from pyvista_krige._advanced import resolve_dim
 from pyvista_krige._advanced import translate_drift
+from pyvista_krige._anisotropy import estimate_anisotropy
 from pyvista_krige._targets import execute_on
 from pyvista_krige._targets import near_samples
 from pyvista_krige._targets import resolve_where
@@ -24,20 +25,18 @@ from pyvista_krige._variogram import experimental_variogram
 from pyvista_krige._variogram import fit_model
 from pyvista_krige._variogram import parameter_dict
 
-# Options of PyKrige's constructors that ``update_variogram_model`` also takes.
-_VARIOGRAM_OPTIONS = (
-    'variogram_parameters',
-    'variogram_function',
-    'nlags',
-    'weight',
-    'anisotropy_scaling',
-    'anisotropy_angle',
+# PyKrige's anisotropy options of 2D and 3D models, as attributes of its instances.
+_ANISOTROPY_2D = ('anisotropy_scaling', 'anisotropy_angle')
+_ANISOTROPY_3D = (
     'anisotropy_scaling_y',
     'anisotropy_scaling_z',
     'anisotropy_angle_x',
     'anisotropy_angle_y',
     'anisotropy_angle_z',
 )
+
+# Options of PyKrige's constructors that ``update_variogram_model`` also takes.
+_VARIOGRAM_OPTIONS = ('variogram_parameters', 'variogram_function', 'nlags', 'weight')
 
 
 class Statistics(NamedTuple):
@@ -156,8 +155,8 @@ class KrigingModel:
             Spatial dimension, 2 or 3.
 
         **kwargs : dict, optional
-            Options forwarded to the PyKrige class, plus ``detrend`` and
-            ``max_lag``.
+            Options forwarded to the PyKrige class, plus ``detrend``,
+            ``max_lag`` and ``anisotropy``.
 
         Returns
         -------
@@ -168,6 +167,10 @@ class KrigingModel:
         fit_kwargs = dict(kwargs)
         detrend = kwargs.pop('detrend', False)
         max_lag = kwargs.pop('max_lag', None)
+        anisotropy = kwargs.pop('anisotropy', None)
+        if anisotropy is not None and not (isinstance(anisotropy, str) and anisotropy == 'auto'):
+            msg = f"anisotropy must be None or 'auto', got {anisotropy!r}."
+            raise ValueError(msg)
         found = sample_arrays(samples, scalars)
         points, values = found.points, found.values
         drift_names = translate_drift(found, kwargs)
@@ -180,6 +183,8 @@ class KrigingModel:
         if method == 'universal':
             imply_drift_terms(kwargs)
         dim = resolve_dim(points, kwargs, dim, method)
+        if anisotropy is not None:
+            kwargs.update(_estimate_anisotropy(points[:, :dim], values, kwargs, detrend, max_lag))
         kriging_class = _kriging_class(method, dim)
         instance = kriging_class(*points.T[:dim], values, **kwargs)
         experimental = None
@@ -237,6 +242,18 @@ class KrigingModel:
         )
 
     @property
+    def anisotropy(self) -> dict[str, float]:
+        """Return the anisotropy options PyKrige applies, whether given or estimated.
+
+        A 2D model has ``anisotropy_scaling`` and ``anisotropy_angle``. A 3D
+        model has ``anisotropy_scaling_y``, ``anisotropy_scaling_z`` and
+        ``anisotropy_angle_x``/``_y``/``_z``. Pass them to
+        :meth:`KrigeAccessor.fit` to reuse them without ``anisotropy='auto'``.
+        """
+        names = _ANISOTROPY_3D if self._dim == 3 else _ANISOTROPY_2D
+        return {name: float(getattr(self._instance, name)) for name in names}
+
+    @property
     def statistics(self) -> Statistics:
         """Return PyKrige's cross-validation statistics of the fit.
 
@@ -264,7 +281,8 @@ class KrigingModel:
         **kwargs : dict, optional
             Options forwarded to PyKrige's ``update_variogram_model``, such as
             ``variogram_parameters`` or ``nlags``. Anisotropy, ``nlags`` and
-            ``weight`` default to this model's.
+            ``weight`` default to this model's. An ``anisotropy='auto'``
+            estimate is kept as it is, not estimated again.
 
         Returns
         -------
@@ -275,10 +293,16 @@ class KrigingModel:
         options = {k: v for k, v in self._fit_kwargs.items() if k in _VARIOGRAM_OPTIONS}
         options.pop('variogram_parameters', None)
         options.pop('variogram_function', None)
+        # Read from the instance so an estimated anisotropy carries over.
+        options.update(self.anisotropy)
         options.update(kwargs)
         instance = copy.deepcopy(self._instance)
         instance.update_variogram_model(variogram_model, **options)
-        fit_kwargs = {**self._fit_kwargs, 'variogram_model': variogram_model, **kwargs}
+        fit_kwargs = {**self._fit_kwargs}
+        if fit_kwargs.pop('anisotropy', None) is not None:
+            # The estimate belongs to the model it was made for, so cross_validate keeps it.
+            fit_kwargs.update(self.anisotropy)
+        fit_kwargs.update(variogram_model=variogram_model, **kwargs)
         for key in ('detrend', 'max_lag'):
             fit_kwargs.pop(key, None)
         return KrigingModel(
@@ -523,6 +547,37 @@ def _subset(cloud: pv.PolyData, mask: np.ndarray) -> pv.PolyData:
     for name in cloud.point_data:
         part.point_data[name] = cloud.point_data[name][mask]
     return part
+
+
+def _estimate_anisotropy(
+    coords: np.ndarray,
+    values: np.ndarray,
+    kwargs: dict[str, Any],
+    detrend: bool,  # noqa: FBT001
+    max_lag: float | None,
+) -> dict[str, float]:
+    """Return PyKrige anisotropy options estimated for ``anisotropy='auto'``."""
+    variogram_model = kwargs.get('variogram_model', 'linear')
+    if not isinstance(variogram_model, str) or variogram_model == 'custom':
+        msg = (
+            "anisotropy='auto' needs a named PyKrige variogram model, not a GSTools CovModel "
+            "or 'custom' function. Set a CovModel's anisotropy on the CovModel itself."
+        )
+        raise ValueError(msg)
+    if kwargs.get('coordinates_type', 'euclidean') == 'geographic':
+        msg = "anisotropy='auto' does not support coordinates_type='geographic'."
+        raise ValueError(msg)
+    given = sorted(set(kwargs) & {*_ANISOTROPY_2D, *_ANISOTROPY_3D})
+    if given:
+        msg = f"anisotropy='auto' estimates {given}, so do not pass them as well."
+        raise ValueError(msg)
+    if detrend:
+        # Center the coordinates as PyKrige does before evaluating the drift.
+        center = 0.5 * (coords.min(axis=0) + coords.max(axis=0))
+        values = detrended(values, drift_matrix(coords - center, kwargs))
+    return estimate_anisotropy(
+        coords, values, variogram_model, nlags=kwargs.get('nlags', 6), max_lag=max_lag
+    )
 
 
 def _refit_variogram(
