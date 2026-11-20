@@ -367,7 +367,7 @@ def write_zmap(
     scalars: str,
     *,
     null_value: float = -9999.0,
-    decimals: int = 7,
+    decimals: int | None = None,
 ) -> None:
     """Write a point array of a one-layer image as a ZMAP Plus grid.
 
@@ -389,8 +389,10 @@ def write_zmap(
     null_value : float, default: -9999.0
         Value written for NaN. Raises ``ValueError`` if a real value equals it.
 
-    decimals : int, default: 7
-        Digits after the decimal point. Values are rounded to this many.
+    decimals : int, optional
+        Digits after the decimal point. Values are rounded to this many. By default
+        it is enough to keep 7 significant digits of the smallest nonzero value, and
+        at least 7 and at most 15.
 
     Examples
     --------
@@ -423,13 +425,18 @@ def write_zmap(
     if nx < 2 or ny < 2:
         msg = f'A ZMAP grid needs at least 2 points along x and y, got {nx} x {ny}.'
         raise ValueError(msg)
-    if decimals < 1:
+    if decimals is not None and decimals < 1:
         msg = 'decimals must be at least 1.'
         raise ValueError(msg)
     nan = np.isnan(values) if values.dtype.kind == 'f' else np.zeros(values.shape, dtype=bool)
     if np.any(values[~nan] == null_value):
         msg = f'The array holds the null value {null_value}. Choose another with null_value=.'
         raise ValueError(msg)
+
+    if decimals is None:
+        nonzero = np.abs(values[~nan & (values != 0)].astype(float))
+        smallest = nonzero.min() if nonzero.size else 1.0
+        decimals = int(np.clip(6 - np.floor(np.log10(smallest)), 7, 15))
 
     # Top row first, then one column at a time from the left.
     columns = np.where(nan, null_value, values.astype(float))[::-1].T

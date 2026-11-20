@@ -252,3 +252,13 @@ def test_writers_reject_bad_input(tmp_path: Path, write) -> None:
     with pytest.raises(ValueError, match='axis-aligned'):
         write(rotated, path, 'z')
     assert not path.exists()
+
+
+def test_zmap_default_decimals_keep_small_values(tmp_path: Path) -> None:
+    grid = pv.ImageData(dimensions=(3, 3, 1))
+    values = np.array([1.2345678e-3, 5.0e3, 0.0, 7.7777777e-2, 1.0, 2.5, 3.5, 4.5, 9.8765432e-3])
+    grid['z'] = values
+    path = tmp_path / 'small.zmap'
+    pyvista_krige.write_zmap(grid, path, 'z')
+    back = pyvista_krige.read_zmap(path, scalars='z')
+    np.testing.assert_allclose(back['z'], values, rtol=1e-6, atol=0)
