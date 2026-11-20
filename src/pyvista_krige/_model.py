@@ -15,6 +15,7 @@ from pyvista_krige._advanced import imply_drift_terms
 from pyvista_krige._advanced import resolve_dim
 from pyvista_krige._advanced import translate_drift
 from pyvista_krige._anisotropy import estimate_anisotropy
+from pyvista_krige._suggest import pick_samples
 from pyvista_krige._targets import execute_on
 from pyvista_krige._targets import near_samples
 from pyvista_krige._targets import resolve_where
@@ -382,6 +383,70 @@ class KrigingModel:
             samples=out,
             scalars=scalars,
         )
+
+    def suggest_samples(
+        self,
+        target: pv.DataSet,
+        n: int,
+        *,
+        where: str | np.ndarray | None = None,
+        min_spacing: float | None = None,
+    ) -> pv.PolyData:
+        """Suggest where to take the next ``n`` samples, where the kriging error is largest.
+
+        Picks greedily. Each step krigs the variance onto the candidate points,
+        takes the point with the largest one, and adds it as a pseudo-sample before
+        the next step. Kriging variance does not depend on the sampled values, so
+        the pseudo-sample takes the current estimate. The variogram is held fixed,
+        not refitted, and every step krigs from all samples with a full kriging
+        system, so ``n_closest_points`` windows are not used.
+
+        Parameters
+        ----------
+        target : pyvista.DataSet
+            Dataset whose points are the candidates. It is not modified.
+
+        n : int
+            Number of points to pick.
+
+        where : str | numpy.ndarray, optional
+            Boolean array, or name of a target point array, that is ``True``
+            at the candidate points. Defaults to every point.
+
+        min_spacing : float, optional
+            Drop candidates closer than this to a pick, in the model's coordinates
+            (x and y only for a 2D model). Without it, picks can cluster
+            where the variance is high.
+
+        Returns
+        -------
+        pyvista.PolyData
+            The picked points, in pick order, with these point arrays:
+            ``'pick order'`` (1 for the first pick) and ``'std before pick'``
+            (the kriging standard deviation at the point before it was picked).
+
+        Raises
+        ------
+        TypeError
+            If ``target`` is a :class:`pyvista.MultiBlock`.
+
+        ValueError
+            If ``n`` is less than 1 or more than the number of candidates, or
+            ``min_spacing`` is negative.
+
+        Warns
+        -----
+        UserWarning
+            If ``min_spacing`` leaves no candidates before ``n`` picks are made.
+            The picks made so far are returned.
+
+        Notes
+        -----
+        Universal kriging reads the drift values of the picks from the ``specified_drift``
+        arrays of ``target``, as :meth:`predict` does.
+
+        """
+        return pick_samples(self, target, n, where=where, min_spacing=min_spacing)
 
     @property
     def instance(self) -> Any:
