@@ -114,6 +114,17 @@ lowers the standard deviation along the border, as the right panel shows.
 
 ![Suggested sample locations](https://raw.githubusercontent.com/kleongf/pyvista-krige/main/docs/images/suggest_samples.png)
 
+### Equally likely surfaces instead of one smooth one
+
+[`examples/conditional_simulation.py`](examples/conditional_simulation.py): the St. Helens
+samples again, fitted in normal score space. Kriging gives the smoothest surface through the
+400 samples. `model.simulate(grid, n=2, seed=0)` draws surfaces that pass through the same
+samples and are as rough as the data. The two right panels compare P(elevation > 2000 m)
+read from the kriging variance with the fraction of 100 realizations above 2000 m
+(`model.simulate(grid, n=100, exceed=2000.0)`).
+
+![Kriging compared with conditional simulation](https://raw.githubusercontent.com/kleongf/pyvista-krige/main/docs/images/conditional_simulation.png)
+
 ### What maps to what
 
 | PyKrige | pyvista-krige |
@@ -136,6 +147,7 @@ lowers the standard deviation along the border, as the right panel shows.
 | (not in PyKrige) declustering weights for clustered samples | `dataset.krige.decluster(cell_size)` or `.decluster(scalars=...)` to choose the cell size by scanning, `dataset.krige.decluster_scan(scalars)` for the scan table |
 | (not in PyKrige) tune a variogram by eye | `pl.krige.add_variogram_widget(model, preview)` adds sliders for the parameters, re-krigs a coarse `preview` as you drag, and gives the tuned model through `callback=` or `pl.krige.variogram_widget_model`. |
 | (not in PyKrige) skewed data | `fit(..., transform='log')` or `'normal_score'`. `predict` and `cross_validate` report the estimate, variance and errors in the original units. Pass `model=` to `exceedance`. |
+| (not in PyKrige) conditional simulation | `model.simulate(target, n, seed=...)` for realizations, `summary=True` for the mean and P10, P50 and P90, `exceed=` for the fraction of realizations above a value |
 | (not in PyKrige) anisotropy geometry | `pl.krige.add_anisotropy_ellipsoid(model)` |
 | `RegressionKriging`, `ClassificationKriging` | `dataset.krige.regression(...)`, `dataset.krige.classify(...)` |
 | `Krige` + `GridSearchCV` | `dataset.krige.cross_validate(scalars, param_grid)` |
@@ -162,6 +174,25 @@ mean = np.average(weighted['grade'], weights=weighted['declustering weight'])
 
 If the samples are clustered where the values are low, pass `maximize=True`. For layered 3D
 samples use a flat cell such as `cell_size=(500, 500, 20)` or `aspect=(1, 1, 0.1)` when scanning.
+
+### Conditional simulation
+
+`model.simulate` draws realizations by sequential Gaussian simulation. Each one equals the
+samples at their locations and varies as much as the data do, where kriging is smooth.
+
+```python
+result = model.simulate(grid, n=50, seed=0)  # 'grade realization 0' ... 'grade realization 49'
+summary = model.simulate(
+    grid, n=200, seed=0, summary=True
+)  # 'grade mean', 'grade P10', 'P50', 'P90'
+prob = model.simulate(grid, n=200, seed=0, exceed=2.5)  # 'P(grade > 2.5)'
+```
+
+The simulation runs in normal score space. A model fitted with `transform='normal_score'` uses
+its own transform and variogram; any other model gets a normal score transform fitted to its
+samples and its variogram rescaled to unit variance. Each target point is kriged from its
+`n_neighbors=16` nearest samples and earlier points. All realizations share one random path,
+so extra realizations cost little. Universal kriging models are not supported.
 
 ### Grid files
 
