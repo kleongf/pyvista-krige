@@ -51,8 +51,11 @@ KRIGE_PROPERTY_CASES=100 PYTHONPATH=src python -m pytest -q tests/properties
 Every assertion message names the seed. Rebuild the case to look at it:
 
 ```python
-import sys; sys.path.insert(0, 'tests/properties')
+import sys
+
+sys.path.insert(0, 'tests/properties')
 from conftest import random_samples, fit_exact, grid_over
+
 samples = random_samples(seed=5, dim=3)
 model = fit_exact(samples, 5)
 grid = grid_over(samples, 5, 3)
