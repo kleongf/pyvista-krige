@@ -35,6 +35,8 @@ class KrigeAccessor:
         *,
         method: str = 'ordinary',
         dim: int | None = None,
+        transform: str | None = None,
+        transform_limits: tuple[float | None, float | None] | None = None,
         **kwargs: Any,
     ) -> KrigingModel:
         """Fit a kriging model to the ``scalars`` array of this dataset.
@@ -54,6 +56,28 @@ class KrigeAccessor:
             Spatial dimension, 2 or 3. By default a GSTools ``variogram_model``
             decides, otherwise samples with a spread in z are kriged in 3D and
             flat samples in 2D. A 2D model uses only the x and y coordinates.
+
+        transform : str, optional
+            Krige transformed values, for skewed data such as grades,
+            permeability or concentrations:
+
+            - ``'log'``: the natural logarithm. Needs positive values.
+            - ``'normal_score'``: standard normal scores of the empirical
+              distribution.
+
+            :meth:`KrigingModel.predict` back-transforms the estimate and
+            variance to the original units, and
+            :meth:`KrigingModel.cross_validate` reports errors in them.
+            :attr:`KrigingModel.variogram` and :attr:`KrigingModel.statistics`
+            stay in the transformed space. Pass the model to
+            :func:`pyvista_krige.exceedance`.
+
+        transform_limits : tuple[float | None, float | None], optional
+            Smallest and largest possible values for ``transform='normal_score'``.
+            Its distribution extends linearly from the smallest and largest
+            samples to these. By default the outermost segments of the
+            empirical distribution are extended, which stays within half a
+            sample spacing of the sample range.
 
         **kwargs : dict, optional
             Options forwarded to the PyKrige class (``OrdinaryKriging``,
@@ -111,7 +135,15 @@ class KrigeAccessor:
         """
         from pyvista_krige._model import KrigingModel  # noqa: PLC0415
 
-        return KrigingModel.fit(self._dataset, scalars, method=method, dim=dim, **kwargs)
+        return KrigingModel.fit(
+            self._dataset,
+            scalars,
+            method=method,
+            dim=dim,
+            transform=transform,
+            transform_limits=transform_limits,
+            **kwargs,
+        )
 
     def to_image(
         self,

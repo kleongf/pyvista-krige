@@ -166,6 +166,7 @@ class KrigeComponent:
         probability: float = 0.5,
         variance: str | None = None,
         below: bool = False,
+        model: KrigingModel | None = None,
         **kwargs: Any,
     ) -> pv.Actor:
         """Add the surface where the field exceeds ``threshold`` with a given probability.
@@ -196,6 +197,9 @@ class KrigeComponent:
         below : bool, default: False
             Contour the probability of falling below ``threshold`` instead.
 
+        model : KrigingModel, optional
+            Model that predicted ``result``. Required when it has a ``transform``.
+
         **kwargs : dict, optional
             Options forwarded to :meth:`pyvista.Plotter.add_mesh`.
 
@@ -208,7 +212,9 @@ class KrigeComponent:
         from pyvista_krige._exceedance import exceedance  # noqa: PLC0415
 
         name = f'P({scalars} {"<" if below else ">"} {threshold:g})'
-        prob = exceedance(result, scalars, threshold, variance=variance, below=below, name=name)
+        prob = exceedance(
+            result, scalars, threshold, variance=variance, below=below, name=name, model=model
+        )
         surface = prob.contour([probability], scalars=name)
         kwargs.setdefault('color', 'tomato')
         kwargs.setdefault('label', f'{name} = {probability:g}')

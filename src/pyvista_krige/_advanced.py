@@ -243,7 +243,14 @@ def cross_validate(
 
     from pyvista_krige._model import KrigingModel  # noqa: PLC0415
 
-    dataset_options = {'specified_drift', 'external_drift', 'detrend', 'max_lag'} & set(kwargs)
+    dataset_options = {
+        'specified_drift',
+        'external_drift',
+        'detrend',
+        'max_lag',
+        'transform',
+        'transform_limits',
+    } & set(kwargs)
     if dataset_options:
         msg = (
             f'cross_validate cannot search with {sorted(dataset_options)}. Fit the candidate '

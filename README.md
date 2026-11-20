@@ -111,6 +111,7 @@ deviation, and `pl.krige.add_uncertainty`.
 | (not in PyKrige) k-fold / leave-one-out scoring of any model | `model.cross_validate(5)` or `'loo'`, `pl.krige.add_residuals(holdout)` |
 | (not in PyKrige) extrapolation limits | `predict(..., max_distance=..., max_std=...)` |
 | (not in PyKrige) exceedance probability | `pyvista_krige.exceedance(result, scalars, threshold)`, `pl.krige.add_exceedance(...)` |
+| (not in PyKrige) skewed data | `fit(..., transform='log')` or `'normal_score'`. `predict` and `cross_validate` report the estimate, variance and errors in the original units. Pass `model=` to `exceedance`. |
 | (not in PyKrige) anisotropy geometry | `pl.krige.add_anisotropy_ellipsoid(model)` |
 | `RegressionKriging`, `ClassificationKriging` | `dataset.krige.regression(...)`, `dataset.krige.classify(...)` |
 | `Krige` + `GridSearchCV` | `dataset.krige.cross_validate(scalars, param_grid)` |
@@ -118,6 +119,7 @@ deviation, and `pl.krige.add_uncertainty`.
 Results follow PyVista's filter conventions:
 - A new dataset is returned, and the input is never modified.
 - The estimate goes in `point_data[scalars]` and the variance in `point_data['<scalars> variance']`.
+- With `transform=`, both are in the original units, and the values kriged in the transformed space go in `'<scalars> transformed'` and `'<scalars> transformed variance'`.
 - Points skipped with `where=`, `max_distance=` or `max_std=` get `null_value`, and a `vtkValidPointMask` array is written.
 
 ### Memory
