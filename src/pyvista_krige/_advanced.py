@@ -250,6 +250,7 @@ def cross_validate(
         'max_lag',
         'transform',
         'transform_limits',
+        'anisotropy',
     } & set(kwargs)
     if dataset_options:
         msg = (

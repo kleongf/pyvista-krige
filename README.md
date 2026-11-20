@@ -49,6 +49,16 @@ pl.add_mesh(kriged.contour(5, scalars='temperature (C)'), opacity=0.5)
 pl.krige.add_exceedance(kriged, 'temperature (C)', 150.0, probability=0.9)
 pl.krige.add_variogram(model, loc=(0.62, 0.62), size=(0.36, 0.36))
 pl.show()
+
+# Tune the variogram by eye. Sliders retune it and re-krige a coarse preview.
+coarse = pv.ImageData(
+    dimensions=(15, 19, 25), spacing=(1000, 1000, 200), origin=(329700, 4252600, -2700)
+)
+coarse['depth'] = coarse.points[:, 2]  # the drift array the model was fitted with
+pl = pv.Plotter()
+pl.krige.add_variogram_widget(model, coarse)
+pl.show()
+tuned = pl.krige.variogram_widget_model
 ```
 
 ## Gallery
@@ -94,6 +104,16 @@ deviation, and `pl.krige.add_uncertainty`.
 
 ![St. Helens rebuilt by kriging](https://raw.githubusercontent.com/kleongf/pyvista-krige/main/docs/images/st_helens.png)
 
+### Where to sample next
+
+[`examples/suggest_samples.py`](examples/suggest_samples.py): `model.suggest_samples(surface, n=5, min_spacing=10.0)`
+picks the five surface points where the kriging standard deviation is largest. It picks one
+at a time and adds each pick as a pseudo-sample before the next, so the picks spread out
+instead of crowding the same corner. The variogram stays fixed. Adding the picks as samples
+lowers the standard deviation along the border, as the right panel shows.
+
+![Suggested sample locations](https://raw.githubusercontent.com/kleongf/pyvista-krige/main/docs/images/suggest_samples.png)
+
 ### What maps to what
 
 | PyKrige | pyvista-krige |
@@ -107,10 +127,14 @@ deviation, and `pl.krige.add_uncertainty`.
 | GSTools `CovModel` | `variogram_model=gs.Matern(dim=3, ...)` |
 | (not in PyKrige) variogram of the drift residuals | `fit(..., method='universal', detrend=True)` |
 | (not in PyKrige) fit only short lags | `fit(..., max_lag=...)` |
+| (not in PyKrige) estimate geometric anisotropy | `fit(..., variogram_model='spherical', anisotropy='auto')`, read back as `model.anisotropy` |
 | (not in PyKrige) directional variograms | `dataset.krige.variogram(scalars, direction='vertical')`, `.fit(model)` |
 | (not in PyKrige) k-fold / leave-one-out scoring of any model | `model.cross_validate(5)` or `'loo'`, `pl.krige.add_residuals(holdout)` |
 | (not in PyKrige) extrapolation limits | `predict(..., max_distance=..., max_std=...)` |
 | (not in PyKrige) exceedance probability | `pyvista_krige.exceedance(result, scalars, threshold)`, `pl.krige.add_exceedance(...)` |
+| (not in PyKrige) where to take the next samples | `model.suggest_samples(target, n, where=..., min_spacing=...)` |
+| (not in PyKrige) declustering weights for clustered samples | `dataset.krige.decluster(cell_size)` or `.decluster(scalars=...)` to choose the cell size by scanning, `dataset.krige.decluster_scan(scalars)` for the scan table |
+| (not in PyKrige) tune a variogram by eye | `pl.krige.add_variogram_widget(model, preview)` adds sliders for the parameters, re-krigs a coarse `preview` as you drag, and gives the tuned model through `callback=` or `pl.krige.variogram_widget_model`. |
 | (not in PyKrige) skewed data | `fit(..., transform='log')` or `'normal_score'`. `predict` and `cross_validate` report the estimate, variance and errors in the original units. Pass `model=` to `exceedance`. |
 | (not in PyKrige) anisotropy geometry | `pl.krige.add_anisotropy_ellipsoid(model)` |
 | `RegressionKriging`, `ClassificationKriging` | `dataset.krige.regression(...)`, `dataset.krige.classify(...)` |
@@ -121,6 +145,42 @@ Results follow PyVista's filter conventions:
 - The estimate goes in `point_data[scalars]` and the variance in `point_data['<scalars> variance']`.
 - With `transform=`, both are in the original units, and the values kriged in the transformed space go in `'<scalars> transformed'` and `'<scalars> transformed variance'`.
 - Points skipped with `where=`, `max_distance=` or `max_std=` get `null_value`, and a `vtkValidPointMask` array is written.
+
+### Declustering
+
+Extra samples near a find skew the mean and the histogram. Cell declustering weights each
+sample by 1 over the number of samples in its cell, averaged over shifted grids.
+
+```python
+# A cell size you choose, or a scan for the one with the lowest declustered mean.
+weighted = samples.krige.decluster(cell_size=500.0)
+weighted = samples.krige.decluster(scalars='grade')
+scan = samples.krige.decluster_scan('grade')  # scan.cell_sizes, scan.means, scan.best
+
+mean = np.average(weighted['grade'], weights=weighted['declustering weight'])
+```
+
+If the samples are clustered where the values are low, pass `maximize=True`. For layered 3D
+samples use a flat cell such as `cell_size=(500, 500, 20)` or `aspect=(1, 1, 0.1)` when scanning.
+
+### Grid files
+
+ESRI ASCII (`.asc`) and ZMAP Plus grids read into an `ImageData` with the values as point
+data, and null cells become NaN. The writers take a one-layer `ImageData` and the name of a
+point array.
+
+```python
+import pyvista_krige
+
+dem = pyvista_krige.read_esri_ascii('dem.asc')  # point data 'values' at the cell centers
+pyvista_krige.write_esri_ascii(kriged, 'out.asc', 'elevation')
+surface = pyvista_krige.read_zmap('surface.zmap')
+pyvista_krige.write_zmap(kriged, 'out.zmap', 'elevation')
+```
+
+ESRI ASCII handles corner and center registration, `cellsize` or `dx` and `dy`, and rows
+stored from north to south. ZMAP header bounds are read as node coordinates, and values are
+read column by column from the top.
 
 ### Memory
 

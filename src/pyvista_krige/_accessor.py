@@ -11,6 +11,7 @@ from pyvista_krige._targets import image_spanning
 
 if TYPE_CHECKING:
     from pyvista_krige._advanced import CrossValidation
+    from pyvista_krige._decluster import DeclusterScan
     from pyvista_krige._model import KrigingModel
     from pyvista_krige._variogram import ExperimentalVariogram
 
@@ -105,7 +106,7 @@ class KrigeAccessor:
               ``external_drift_scalars``. Giving a drift option adds its term
               to ``drift_terms``, which PyKrige otherwise requires.
 
-            Two options are handled here rather than by PyKrige:
+            Three options are handled here rather than by PyKrige:
 
             - ``detrend=True`` (universal kriging): fit the variogram to the
               least-squares residuals of the drift instead of the raw values.
@@ -115,6 +116,26 @@ class KrigeAccessor:
             - ``max_lag``: fit the variogram only to pairs closer than this,
               since long lags have few pairs and often show the trend rather
               than the correlation. Half the sample extent is a common choice.
+            - ``anisotropy='auto'``: estimate the anisotropy from directional
+              variograms and pass it to PyKrige, instead of comparing the
+              variograms by hand and setting the ``anisotropy_*`` options.
+              The nugget and sill come from the omnidirectional variogram.
+              The range is then fitted along eight horizontal directions to
+              find the major axis and the ratio of the horizontal ranges, and
+              along z for 3D samples. Read the result from
+              :attr:`KrigingModel.anisotropy`. It needs a bounded
+              ``variogram_model`` (``'gaussian'``, ``'spherical'``,
+              ``'exponential'`` or ``'hole-effect'``, not PyKrige's default
+              ``'linear'``) and cannot be combined with the ``anisotropy_*``
+              options, a GSTools model or ``coordinates_type='geographic'``.
+              The estimate uses the drift residuals with ``detrend=True``,
+              ``nlags`` lag bins, and pairs up to ``max_lag``. Tilted
+              anisotropy is not estimated, so ``anisotropy_angle_x`` and
+              ``_y`` stay 0. The estimate is noisy with fewer than a few
+              hundred samples. Combine it with ``max_lag``, which fits the
+              variogram of the adjusted coordinates to short lags only.
+              :meth:`KrigingModel.cross_validate` estimates the anisotropy
+              again in every fold.
 
         Returns
         -------
@@ -131,6 +152,15 @@ class KrigeAccessor:
         >>> model = samples.krige.fit('height', variogram_model='spherical')
         >>> model.dim
         2
+
+        The variation of ``height`` is along x only, so the correlation reaches
+        further along y.
+
+        >>> model = samples.krige.fit(
+        ...     'height', variogram_model='spherical', anisotropy='auto'
+        ... )
+        >>> bool(model.anisotropy['anisotropy_scaling'] > 1)
+        True
 
         """
         from pyvista_krige._model import KrigingModel  # noqa: PLC0415
@@ -245,7 +275,8 @@ class KrigeAccessor:
 
         Comparing directions shows anisotropy. For example, a vertical range
         a third of the horizontal one suggests ``anisotropy_scaling_z=3`` when
-        fitting. Plot the result with ``pl.krige.add_variogram``.
+        fitting. ``fit(..., anisotropy='auto')`` makes this comparison for you.
+        Plot the result with ``pl.krige.add_variogram``.
 
         Parameters
         ----------
@@ -506,4 +537,188 @@ class KrigeAccessor:
             method=method,
             dim=dim,
             **kwargs,
+        )
+
+    def decluster(
+        self,
+        cell_size: float | tuple[float, ...] | None = None,
+        *,
+        scalars: str | None = None,
+        name: str = 'declustering weight',
+        n_offsets: int = 10,
+        n_sizes: int = 20,
+        size_range: tuple[float, float] | None = None,
+        aspect: tuple[float, ...] | None = None,
+        maximize: bool = False,
+    ) -> pv.DataSet:
+        """Return a copy with cell declustering weights for clustered samples.
+
+        Samples gathered where values are high or low, such as extra boreholes
+        around a find, skew the mean and the histogram. Cell declustering lays a
+        grid over the samples and gives each one the weight 1 over the number of
+        samples in its cell. The weights are scaled to sum to the number of
+        samples and averaged over shifted grid origins, so they do not depend on
+        where the grid starts or on the order of the samples.
+
+        The weights are written to ``point_data[name]``, or to ``cell_data`` when
+        ``scalars`` is a cell array. The cell size used is stored in
+        ``field_data['declustering cell size']``. Use the weights with
+        :func:`numpy.average` or :func:`numpy.histogram` to get declustered
+        statistics.
+
+        Parameters
+        ----------
+        cell_size : float | tuple[float, ...], optional
+            Cell size. A number gives square cells for flat samples and cubes for
+            samples with a spread in z. A tuple ``(dx, dy)`` or ``(dx, dy, dz)``
+            sets each axis, for example a thin dz for layered samples. By default
+            the size is chosen by scanning, see :meth:`decluster_scan`, which
+            needs ``scalars``.
+
+        scalars : str, optional
+            Name of the point or cell data array whose mean the scan declusters.
+            Cell arrays are sampled at the cell centers. Only needed to choose
+            the cell size.
+
+        name : str, default: 'declustering weight'
+            Name of the weight array.
+
+        n_offsets : int, default: 10
+            Number of shifted grid origins to average over.
+
+        n_sizes : int, default: 20
+            Number of cell sizes to scan.
+
+        size_range : tuple[float, float], optional
+            Smallest and largest cell size to scan. By default, from the 10th
+            percentile of the nearest-neighbor distances to half the longest
+            extent.
+
+        aspect : tuple[float, ...], optional
+            Shape of the scanned cell, so the cell is ``size * aspect``. Its
+            length sets the dimension. By default cells are square or cubic.
+
+        maximize : bool, default: False
+            Choose the cell size with the highest declustered mean instead of the
+            lowest. Use it when the samples are clustered where values are low.
+
+        Returns
+        -------
+        pyvista.DataSet
+            Copy of the dataset with the weights.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> import pyvista as pv
+        >>> rng = np.random.default_rng(0)
+        >>> regular = np.mgrid[0:10:5j, 0:10:5j].reshape(2, -1).T
+        >>> cluster = rng.uniform(4, 5, (25, 2))
+        >>> xy = np.vstack([regular, cluster])
+        >>> samples = pv.PolyData(np.column_stack([xy, np.zeros(len(xy))]))
+        >>> weighted = samples.krige.decluster(cell_size=2.0)
+        >>> weights = weighted['declustering weight']
+        >>> bool(weights[25:].mean() < weights[:25].mean())
+        True
+
+        """
+        from pyvista_krige._decluster import decluster  # noqa: PLC0415
+
+        scan = None
+        if cell_size is None:
+            scan = self.decluster_scan(
+                scalars,  # type: ignore[arg-type]
+                n_offsets=n_offsets,
+                n_sizes=n_sizes,
+                size_range=size_range,
+                aspect=aspect,
+                maximize=maximize,
+            )
+        return decluster(
+            self._dataset,
+            cell_size,
+            scalars=scalars,
+            name=name,
+            n_offsets=n_offsets,
+            scan=scan,
+        )
+
+    def decluster_scan(
+        self,
+        scalars: str,
+        *,
+        n_offsets: int = 10,
+        n_sizes: int = 20,
+        size_range: tuple[float, float] | None = None,
+        aspect: tuple[float, ...] | None = None,
+        maximize: bool = False,
+    ) -> DeclusterScan:
+        """Scan cell sizes for the one with the lowest declustered mean.
+
+        For each of ``n_sizes`` cell sizes, spaced geometrically, this computes the
+        declustered mean of ``scalars``. When the samples cluster where values are
+        high, the mean drops as the cells grow to hold the clusters and rises
+        again once the cells hold everything, so the lowest mean marks the best
+        size. Plot ``cell_sizes[:, 0]`` against ``means`` to check that the
+        minimum is a clear one. :meth:`decluster` runs this scan when it is not
+        given a ``cell_size``.
+
+        Parameters
+        ----------
+        scalars : str
+            Name of the point or cell data array whose mean to decluster. Samples
+            with NaN or infinite values do not count towards the mean.
+
+        n_offsets : int, default: 10
+            Number of shifted grid origins to average over.
+
+        n_sizes : int, default: 20
+            Number of cell sizes to scan.
+
+        size_range : tuple[float, float], optional
+            Smallest and largest cell size to scan. By default, from the 10th
+            percentile of the nearest-neighbor distances to half the longest
+            extent.
+
+        aspect : tuple[float, ...], optional
+            Shape of the scanned cell, so the cell is ``size * aspect``. Its
+            length sets the dimension. By default cells are square for flat
+            samples and cubic for samples with a spread in z.
+
+        maximize : bool, default: False
+            Choose the highest declustered mean instead of the lowest. Use it when
+            the samples are clustered where values are low. A warning says when the
+            best size is at the end of the range, which usually means the wrong
+            choice of direction.
+
+        Returns
+        -------
+        DeclusterScan
+            Cell sizes, declustered means and the index of the chosen size.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> import pyvista as pv
+        >>> rng = np.random.default_rng(0)
+        >>> regular = np.mgrid[0:10:5j, 0:10:5j].reshape(2, -1).T
+        >>> cluster = rng.uniform(4, 5, (25, 2))
+        >>> xy = np.vstack([regular, cluster])
+        >>> samples = pv.PolyData(np.column_stack([xy, np.zeros(len(xy))]))
+        >>> samples['grade'] = np.r_[np.ones(25), np.full(25, 3.0)]
+        >>> scan = samples.krige.decluster_scan('grade')
+        >>> bool(scan.means[scan.best] < samples['grade'].mean())
+        True
+
+        """
+        from pyvista_krige._decluster import scan_dataset  # noqa: PLC0415
+
+        return scan_dataset(
+            self._dataset,
+            scalars,
+            n_offsets=n_offsets,
+            n_sizes=n_sizes,
+            size_range=size_range,
+            aspect=aspect,
+            maximize=maximize,
         )

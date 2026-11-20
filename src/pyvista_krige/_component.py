@@ -8,6 +8,7 @@ from typing import Any
 import pyvista as pv
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from collections.abc import Sequence
 
     from pyvista_krige._model import HoldOut
@@ -35,6 +36,17 @@ class KrigeComponent:
 
     def __init__(self, plotter: pv.Plotter) -> None:
         self._plotter = plotter
+        self._widget_model: KrigingModel | None = None
+
+    @property
+    def variogram_widget_model(self) -> KrigingModel | None:
+        """Return the model most recently set by a variogram widget.
+
+        It starts as the model given to :meth:`add_variogram_widget` and is
+        replaced on every slider change. ``None`` until a widget is added. With
+        several widgets on one plotter this is the one moved last.
+        """
+        return self._widget_model
 
     def add_variogram(
         self,
@@ -105,6 +117,127 @@ class KrigeComponent:
                 )
         self._plotter.add_chart(chart)
         return chart
+
+    def add_variogram_widget(
+        self,
+        model: KrigingModel,
+        preview: pv.DataSet,
+        *,
+        callback: Callable[[KrigingModel], object] | None = None,
+        interaction_event: str = 'always',
+        scalars: str | None = None,
+        show_variogram: bool = True,
+        chart_loc: tuple[float, float] = (0.6, 0.05),
+        chart_size: tuple[float, float] = (0.38, 0.4),
+        **kwargs: Any,
+    ) -> pv.Actor:
+        """Add sliders that tune a variogram and re-krige a preview as they move.
+
+        There is one slider for each parameter of the model's variogram,
+        starting at the fitted value: partial sill, range and nugget for the
+        spherical, exponential, gaussian and hole-effect models, slope and
+        nugget for ``'linear'``, and scale, exponent and nugget for
+        ``'power'``. Each change rebuilds the model with
+        :meth:`KrigingModel.with_variogram`, krigs ``preview`` again and
+        updates the mesh in place. The tuned model is available through
+        ``callback`` and :attr:`variogram_widget_model`.
+
+        Sliders are stacked at the lower left. The nugget runs from 0 to twice
+        the fitted value, or to half the largest experimental semivariance
+        when that is larger, because PyKrige often fits a nugget of about 0.
+        The range runs from the smallest lag to the larger of twice the fitted
+        range and the largest lag, because PyKrige often fits a range equal to
+        the largest lag. The partial sill, slope and scale run from 1 % of
+        twice the fitted value to twice the fitted value.
+
+        Parameters
+        ----------
+        model : KrigingModel
+            Fitted model to tune. It is not modified.
+
+        preview : pyvista.DataSet
+            Dataset to krige on every change. Use a coarse one: the sliders
+            krige all its points each time, and a preview of more than 50 000
+            points warns. It is not modified.
+
+        callback : callable, optional
+            Called with the new :class:`KrigingModel` after each slider change.
+
+        interaction_event : str, default: 'always'
+            When a slider reports its value: ``'always'`` while dragging, or
+            ``'end'`` when the mouse is released.
+
+        scalars : str, optional
+            Array of the kriged preview to color by. Defaults to the estimate.
+            Pass ``'<name> variance'`` to see the effect of the partial sill,
+            slope and scale, which scale the variance but leave the estimate
+            unchanged when the nugget is near 0.
+
+        show_variogram : bool, default: True
+            Also draw the experimental variogram and the current model curve
+            as a chart, as :meth:`add_variogram` does.
+
+        chart_loc : sequence[float], default: (0.6, 0.05)
+            Lower-left corner of the chart, in normalized viewport coordinates.
+
+        chart_size : sequence[float], default: (0.38, 0.4)
+            Width and height of the chart, in normalized viewport coordinates.
+
+        **kwargs : dict, optional
+            Options forwarded to :meth:`pyvista.Plotter.add_mesh` for the
+            preview. The color limits default to the range of the first
+            prediction.
+
+        Returns
+        -------
+        pyvista.Actor
+            The actor of the preview mesh.
+
+        Raises
+        ------
+        ValueError
+            If the model's variogram is custom or from GSTools.
+
+        Examples
+        --------
+        Tune a spherical variogram while watching a coarse preview.
+
+        >>> import numpy as np
+        >>> import pyvista as pv
+        >>> rng = np.random.default_rng(0)
+        >>> samples = pv.PolyData(rng.uniform(0, 10, size=(40, 3)) * (1, 1, 0))
+        >>> samples['z'] = np.sin(samples.points[:, 0] / 3)
+        >>> model = samples.krige.fit('z', variogram_model='spherical')
+        >>> preview = pv.ImageData(dimensions=(15, 15, 1), spacing=(0.7, 0.7, 1))
+        >>> pl = pv.Plotter(off_screen=True)
+        >>> actor = pl.krige.add_variogram_widget(model, preview)
+        >>> len(pl.widgets.slider_widgets)
+        3
+        >>> tuned = pl.krige.variogram_widget_model  # after dragging the sliders
+        >>> pl.close()
+
+        """
+        from pyvista_krige._widget import VariogramWidget  # noqa: PLC0415
+
+        def update(tuned: KrigingModel) -> None:
+            self._widget_model = tuned
+            if callback is not None:
+                callback(tuned)
+
+        widget = VariogramWidget(
+            self._plotter,
+            model,
+            preview,
+            callback=update,
+            interaction_event=interaction_event,
+            scalars=scalars,
+            show_variogram=show_variogram,
+            chart_loc=chart_loc,
+            chart_size=chart_size,
+            mesh_kwargs=kwargs,
+        )
+        self._widget_model = model
+        return widget.actor
 
     def add_uncertainty(
         self,
