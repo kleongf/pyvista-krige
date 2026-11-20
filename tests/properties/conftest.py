@@ -53,7 +53,14 @@ def fit_exact(samples: pv.PolyData, seed: int, **kwargs: object) -> pyvista_krig
     rng = np.random.default_rng(seed + 10_000)
     model = _MODELS[seed % len(_MODELS)]
     extent = float(np.ptp(samples.points, axis=0).max())
-    sill = float(np.var(samples['v'])) or 1.0
+    # The variogram lives in the space that is kriged, so a transform sets its scale.
+    transform = kwargs.get('transform')
+    if transform == 'log':
+        sill = float(np.var(np.log(samples['v'])))
+    elif transform == 'normal_score':
+        sill = 1.0
+    else:
+        sill = float(np.var(samples['v'])) or 1.0
     if model == 'linear':
         parameters = {'slope': sill / extent, 'nugget': 0.0}
     else:
