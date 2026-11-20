@@ -94,6 +94,16 @@ deviation, and `pl.krige.add_uncertainty`.
 
 ![St. Helens rebuilt by kriging](https://raw.githubusercontent.com/kleongf/pyvista-krige/main/docs/images/st_helens.png)
 
+### Where to sample next
+
+[`examples/suggest_samples.py`](examples/suggest_samples.py): `model.suggest_samples(surface, n=5, min_spacing=10.0)`
+picks the five surface points where the kriging standard deviation is largest. It picks one
+at a time and adds each pick as a pseudo-sample before the next, so the picks spread out
+instead of crowding the same corner. The variogram stays fixed. Adding the picks as samples
+lowers the standard deviation along the border, as the right panel shows.
+
+![Suggested sample locations](https://raw.githubusercontent.com/kleongf/pyvista-krige/main/docs/images/suggest_samples.png)
+
 ### What maps to what
 
 | PyKrige | pyvista-krige |
@@ -111,6 +121,7 @@ deviation, and `pl.krige.add_uncertainty`.
 | (not in PyKrige) k-fold / leave-one-out scoring of any model | `model.cross_validate(5)` or `'loo'`, `pl.krige.add_residuals(holdout)` |
 | (not in PyKrige) extrapolation limits | `predict(..., max_distance=..., max_std=...)` |
 | (not in PyKrige) exceedance probability | `pyvista_krige.exceedance(result, scalars, threshold)`, `pl.krige.add_exceedance(...)` |
+| (not in PyKrige) where to take the next samples | `model.suggest_samples(target, n, where=..., min_spacing=...)` |
 | (not in PyKrige) anisotropy geometry | `pl.krige.add_anisotropy_ellipsoid(model)` |
 | `RegressionKriging`, `ClassificationKriging` | `dataset.krige.regression(...)`, `dataset.krige.classify(...)` |
 | `Krige` + `GridSearchCV` | `dataset.krige.cross_validate(scalars, param_grid)` |
