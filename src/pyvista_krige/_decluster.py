@@ -78,7 +78,9 @@ def declustering_weights(points: np.ndarray, cell: np.ndarray, n_offsets: int = 
         raise ValueError(msg)
     coords = points[:, : cell.size]
     n = len(coords)
-    scaled = (coords - coords.min(axis=0)) / cell
+    # Round off division noise, so a sample one cell size from the origin does not
+    # fall just below the cell boundary and share a cell with its neighbor.
+    scaled = np.round((coords - coords.min(axis=0)) / cell, 9)
     steps = _OFFSET_STEPS[: cell.size]
     total = np.zeros(n)
     for j in range(n_offsets):

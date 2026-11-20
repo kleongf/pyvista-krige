@@ -199,3 +199,13 @@ def test_identical_points_need_an_explicit_size_range():
     samples = _polydata(np.zeros((5, 3)), value=np.arange(5.0))
     with pytest.raises(ValueError, match='size_range'):
         samples.krige.decluster_scan('value')
+
+
+@pytest.mark.parametrize('spacing', [0.1, 0.3, 0.7, 1.1, 3.3, 7.7])
+def test_lattice_with_cell_equal_to_spacing_is_not_split_by_round_off(spacing):
+    # k * spacing / spacing can come out just below k, which would merge two cells.
+    idx = np.arange(8)
+    gx, gy, gz = np.meshgrid(idx, idx, idx[:4])
+    xyz = np.column_stack([gx.ravel(), gy.ravel(), gz.ravel()]) * spacing
+    weights = _polydata(xyz).krige.decluster(cell_size=spacing)[NAME]
+    np.testing.assert_allclose(weights, 1.0, rtol=1e-9)
