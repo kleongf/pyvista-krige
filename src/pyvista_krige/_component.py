@@ -275,6 +275,7 @@ class KrigeComponent:
             The actor of the added mesh.
 
         """
+        from pyvista_krige._exceedance import attributes  # noqa: PLC0415
         from pyvista_krige._exceedance import uncertainty_name  # noqa: PLC0415
 
         variance = uncertainty_name(result, scalars, variance)
@@ -284,7 +285,7 @@ class KrigeComponent:
         import numpy as np  # noqa: PLC0415
 
         # Variances are in squared data units, but opacity must lie in [0, 1].
-        uncertainty = np.asarray(result.point_data[variance], dtype=float)
+        uncertainty = np.asarray(attributes(result, variance)[variance], dtype=float)
         low, high = np.nanmin(uncertainty), np.nanmax(uncertainty)
         scaled = (uncertainty - low) / (high - low) if high > low else np.zeros_like(uncertainty)
         opacity = 1.0 - (1.0 - min_opacity) * np.nan_to_num(scaled, nan=1.0)
@@ -348,6 +349,9 @@ class KrigeComponent:
         prob = exceedance(
             result, scalars, threshold, variance=variance, below=below, name=name, model=model
         )
+        if name not in prob.point_data:
+            # VTK contours point data only, so average a cell result onto the points.
+            prob = prob.cell_data_to_point_data()
         surface = prob.contour([probability], scalars=name)
         kwargs.setdefault('color', 'tomato')
         kwargs.setdefault('label', f'{name} = {probability:g}')

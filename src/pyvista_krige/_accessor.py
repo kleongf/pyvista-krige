@@ -189,6 +189,7 @@ class KrigeAccessor:
         std: bool = False,
         max_distance: float | None = None,
         max_std: float | None = None,
+        preference: str = 'point',
         **kwargs: Any,
     ) -> pv.ImageData:
         """Krige ``scalars`` onto a new image spanning the bounds of this dataset.
@@ -230,13 +231,18 @@ class KrigeAccessor:
         max_std : float, optional
             Null image points whose kriging standard deviation exceeds this.
 
+        preference : str, default: 'point'
+            ``'cell'`` kriges the image's cell centers into cell data. See
+            :meth:`KrigingModel.predict`.
+
         **kwargs : dict, optional
             Options forwarded to :meth:`fit`.
 
         Returns
         -------
         pyvista.ImageData
-            Image with the estimate and its variance as point data.
+            Image with the estimate and its variance as point data, or as cell
+            data with ``preference='cell'``.
 
         """
         model = self.fit(scalars, **kwargs)
@@ -256,6 +262,7 @@ class KrigeAccessor:
             std=std,
             max_distance=max_distance,
             max_std=max_std,
+            preference=preference,
         )
 
     def variogram(
