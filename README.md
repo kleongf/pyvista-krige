@@ -131,6 +131,7 @@ lowers the standard deviation along the border, as the right panel shows.
 | (not in PyKrige) directional variograms | `dataset.krige.variogram(scalars, direction='vertical')`, `.fit(model)` |
 | (not in PyKrige) k-fold / leave-one-out scoring of any model | `model.cross_validate(5)` or `'loo'`, `pl.krige.add_residuals(holdout)` |
 | (not in PyKrige) extrapolation limits | `predict(..., max_distance=..., max_std=...)` |
+| (not in PyKrige) values on cells, for block models | `predict(target, preference='cell')` kriges the cell centers into `cell_data`. Axis-aligned grids keep the fast grid path, and `where=` and drift arrays read `cell_data`. This is point kriging at the centers, not block kriging. |
 | (not in PyKrige) exceedance probability | `pyvista_krige.exceedance(result, scalars, threshold)`, `pl.krige.add_exceedance(...)` |
 | (not in PyKrige) where to take the next samples | `model.suggest_samples(target, n, where=..., min_spacing=...)` |
 | (not in PyKrige) declustering weights for clustered samples | `dataset.krige.decluster(cell_size)` or `.decluster(scalars=...)` to choose the cell size by scanning, `dataset.krige.decluster_scan(scalars)` for the scan table |
@@ -142,9 +143,9 @@ lowers the standard deviation along the border, as the right panel shows.
 
 Results follow PyVista's filter conventions:
 - A new dataset is returned, and the input is never modified.
-- The estimate goes in `point_data[scalars]` and the variance in `point_data['<scalars> variance']`.
+- The estimate goes in `point_data[scalars]` and the variance in `point_data['<scalars> variance']`, or in `cell_data` with `preference='cell'`.
 - With `transform=`, both are in the original units, and the values kriged in the transformed space go in `'<scalars> transformed'` and `'<scalars> transformed variance'`.
-- Points skipped with `where=`, `max_distance=` or `max_std=` get `null_value`, and a `vtkValidPointMask` array is written.
+- Points skipped with `where=`, `max_distance=` or `max_std=` get `null_value`, and a `vtkValidPointMask` array is written (`vtkValidCellMask` on cells).
 
 ### Declustering
 
