@@ -42,3 +42,13 @@ S=src/pyvista_krige/_simulate.py
 mutate sim-skips-earlier-nodes $S '        if kriged:' '        if False:'
 P=src/pyvista_krige/_persist.py
 mutate load-drops-transform $P 'values = found.values if transform is None else transform.forward(found.values)' 'values = found.values'
+R=src/pyvista_krige/_transform.py
+mutate log-mean-drops-variance $R 'mean = np.exp(estimate + variance / 2)' 'mean = np.exp(estimate)'
+mutate score-ignores-variance  $R 'values = np.interp(ndtr(estimate + std * node), self.cdf, self.values)' 'values = np.interp(ndtr(estimate), self.cdf, self.values)'
+I=src/pyvista_krige/_io.py
+mutate esri-reader-no-flip     $I 'return _make_image(values[::-1], (x0, y0), (dx, dy), scalars)' 'return _make_image(values, (x0, y0), (dx, dy), scalars)'
+mutate zmap-reader-row-major   $I 'values = values.reshape(ncols, nrows).T[::-1]' 'values = values.reshape(nrows, ncols)[::-1]'
+G=src/pyvista_krige/_suggest.py
+mutate suggest-never-refits    $G '        current = type(model).fit(cloud, scalars, method=model._method, dim=dim, **fit_kwargs)' '        current = model'
+D=src/pyvista_krige/_decluster.py
+mutate decluster-edge-noise    $D 'scaled = np.round((coords - coords.min(axis=0)) / cell, 9)' 'scaled = (coords - coords.min(axis=0)) / cell'
