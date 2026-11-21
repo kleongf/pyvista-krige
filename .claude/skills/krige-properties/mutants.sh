@@ -38,3 +38,5 @@ mutate exceedance-tail     $E 'probability = norm.sf(' 'probability = norm.cdf('
 mutate exceedance-below    $E 'probability = 1.0 - probability' 'probability = probability'
 mutate std-as-variance     $E "std = name.endswith(' std')" 'std = False'
 mutate exceedance-scaled   $E '    probability[~np.isfinite(mean)] = np.nan' $'    probability = np.clip(probability * 1.01, 0, 1)\n    probability[~np.isfinite(mean)] = np.nan'
+P=src/pyvista_krige/_persist.py
+mutate load-drops-transform $P 'values = found.values if transform is None else transform.forward(found.values)' 'values = found.values'
