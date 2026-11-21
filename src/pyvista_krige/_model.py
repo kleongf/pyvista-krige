@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from typing import TYPE_CHECKING
 from typing import Any
 from typing import NamedTuple
 
@@ -17,6 +18,7 @@ from pyvista_krige._advanced import translate_drift
 from pyvista_krige._anisotropy import estimate_anisotropy
 from pyvista_krige._simulate import simulate
 from pyvista_krige._suggest import pick_samples
+from pyvista_krige._targets import cell_centers
 from pyvista_krige._targets import execute_on
 from pyvista_krige._targets import near_samples
 from pyvista_krige._targets import resolve_where
@@ -28,6 +30,9 @@ from pyvista_krige._variogram import Variogram
 from pyvista_krige._variogram import experimental_variogram
 from pyvista_krige._variogram import fit_model
 from pyvista_krige._variogram import parameter_dict
+
+if TYPE_CHECKING:
+    import os
 
 # PyKrige's anisotropy options of 2D and 3D models, as attributes of its instances.
 _ANISOTROPY_2D = ('anisotropy_scaling', 'anisotropy_angle')
@@ -591,6 +596,71 @@ class KrigingModel:
             exceed=exceed,
         )
 
+    def save(self, path: str | os.PathLike) -> None:
+        """Save this fitted model to a ``.npz`` file.
+
+        The file holds the samples, the fit options, the fitted variogram
+        parameters and anisotropy, and the fitted transform, as plain arrays
+        and JSON. It never stores code, so :meth:`load` cannot run any.
+
+        Parameters
+        ----------
+        path : str | os.PathLike
+            File to write. It is written as given, with no extension added.
+
+        Raises
+        ------
+        TypeError
+            If the model has a custom variogram function, a GSTools
+            ``CovModel``, a ``functional_drift``, or a fit option that is not
+            a JSON value or an array.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> import pyvista as pv
+        >>> import pyvista_krige
+        >>> samples = pv.PolyData(
+        ...     np.random.default_rng(0).uniform(0, 10, (20, 3)) * [1, 1, 0]
+        ... )
+        >>> samples['v'] = samples.points[:, 0]
+        >>> model = samples.krige.fit('v', variogram_model='spherical')
+        >>> model.save('model.npz')  # doctest: +SKIP
+        >>> model = pyvista_krige.KrigingModel.load('model.npz')  # doctest: +SKIP
+
+        """
+        from pyvista_krige._persist import save_model  # noqa: PLC0415
+
+        save_model(self, path)
+
+    @classmethod
+    def load(cls, path: str | os.PathLike) -> KrigingModel:
+        """Load a model saved with :meth:`save`, without fitting it again.
+
+        The loaded model predicts exactly like the saved one. Loading reads
+        only arrays and JSON, so an untrusted file cannot run code.
+
+        Parameters
+        ----------
+        path : str | os.PathLike
+            File written by :meth:`save`.
+
+        Returns
+        -------
+        KrigingModel
+            The loaded model.
+
+        Raises
+        ------
+        ValueError
+            If the file is not a saved model, or was saved in a format version
+            this pyvista-krige does not read.
+
+        """
+        from pyvista_krige._persist import load_model  # noqa: PLC0415
+
+        return load_model(path)
+
     @property
     def instance(self) -> Any:
         """Return the underlying PyKrige object."""
@@ -609,12 +679,18 @@ class KrigingModel:
         max_distance: float | None = None,
         max_std: float | None = None,
         null_value: float = np.nan,
+        preference: str = 'point',
     ) -> pv.DataSet:
-        """Krige onto the points of ``target`` and return a copy with the estimate.
+        """Krige onto the points or cells of ``target`` and return a copy with the estimate.
 
         Axis-aligned :class:`pyvista.ImageData` and :class:`pyvista.RectilinearGrid`
         targets use PyKrige's fast grid path; every other dataset is kriged
         point by point.
+
+        With ``preference='cell'`` the estimate is kriged at the cell centers
+        and written as cell data, for block models and reservoir grids. This
+        is point kriging at each center, not block kriging: the variance is
+        that of the center, not of the cell's average.
 
         With a ``transform``, the estimate and variance are the mean and
         variance of the back-transformed distribution, in the original units.
@@ -653,7 +729,10 @@ class KrigingModel:
         where : str | numpy.ndarray, optional
             Boolean array, or name of a target point array, that is ``True``
             where to krige. Other points get ``null_value``, and a
-            ``vtkValidPointMask`` array marks the kriged points.
+            ``vtkValidPointMask`` array marks the kriged points. With
+            ``preference='cell'`` it holds one value per cell, a name reads
+            ``cell_data``, and a ``uint8`` cell array ``vtkValidCellMask`` marks
+            the kriged cells.
 
         max_distance : float, optional
             Skip points farther than this from every sample, in the model's
@@ -669,10 +748,17 @@ class KrigingModel:
             Value written to points excluded by ``where``, ``max_distance`` or
             ``max_std``.
 
+        preference : str, default: 'point'
+            ``'point'`` kriges the points of ``target`` into ``point_data``.
+            ``'cell'`` kriges its cell centers into ``cell_data``, and every
+            other option applies to those centers. Drift arrays of a
+            universal model are then read from ``cell_data``.
+
         Returns
         -------
         pyvista.DataSet
-            Copy of ``target`` with the estimate in ``point_data[scalars]``.
+            Copy of ``target`` with the estimate in ``point_data[scalars]``,
+            or ``cell_data[scalars]`` with ``preference='cell'``.
 
         Raises
         ------
@@ -680,16 +766,38 @@ class KrigingModel:
             If ``target`` is a :class:`pyvista.MultiBlock`.
 
         ValueError
-            If the backend options are unsupported for this model.
+            If the backend options are unsupported for this model, or
+            ``preference`` is not ``'point'`` or ``'cell'``.
+
+        Examples
+        --------
+        Krige grades onto the blocks of a block model:
+
+        >>> import numpy as np
+        >>> import pyvista as pv
+        >>> import pyvista_krige
+        >>> rng = np.random.default_rng(0)
+        >>> samples = pv.PolyData(rng.uniform(0, 10, (30, 3)))
+        >>> samples['grade'] = samples.points[:, 0]
+        >>> model = samples.krige.fit('grade')
+        >>> blocks = pv.ImageData(dimensions=(6, 6, 6), spacing=(2, 2, 2))
+        >>> result = model.predict(blocks, preference='cell')
+        >>> result.cell_data['grade'].shape
+        (125,)
 
         """
         if isinstance(target, pv.MultiBlock):
             msg = 'MultiBlock targets are not supported. Use target.combine() first.'
             raise TypeError(msg)
+        if preference not in ('point', 'cell'):
+            msg = f"preference must be 'point' or 'cell', got {preference!r}."
+            raise ValueError(msg)
         execute_kwargs = self._execute_kwargs(backend, n_closest_points)
-        where = resolve_where(target, where)
+        where = resolve_where(target, where, preference)
+        data = target.point_data if preference == 'point' else target.cell_data
+        nodes = target if preference == 'point' else cell_centers(target)
         if max_distance is not None:
-            near = near_samples(self._samples.points, target, self._dim, max_distance)
+            near = near_samples(self._samples.points, nodes, self._dim, max_distance)
             where = near if where is None else where & near
         max_points = None
         if n_closest_points is None and max_memory is not None:
@@ -697,11 +805,9 @@ class KrigingModel:
             max_points = max(1, int(max_memory // ((self._n_samples + 1) * 8)))
         drift_arrays = None
         if self._drift_names is not None:
-            drift_arrays = [
-                np.asarray(target.point_data[name], dtype=float) for name in self._drift_names
-            ]
+            drift_arrays = [np.asarray(data[name], dtype=float) for name in self._drift_names]
         estimate, sigma2 = execute_on(
-            self._instance, target, self._dim, where, drift_arrays, max_points, **execute_kwargs
+            self._instance, nodes, self._dim, where, drift_arrays, max_points, **execute_kwargs
         )
         transformed = None
         if self._transform is not None:
@@ -712,6 +818,7 @@ class KrigingModel:
             certain = np.sqrt(np.clip(sigma2, 0, None)) <= max_std
             where = certain if where is None else where & certain
         out = target.copy()
+        out_data = out.point_data if preference == 'point' else out.cell_data
         arrays = {self._scalars: estimate}
         if variance:
             name = variance if isinstance(variance, str) else _uncertainty_name(self._scalars, std)
@@ -724,9 +831,9 @@ class KrigingModel:
         for name, values in arrays.items():
             if where is not None:
                 values[~where] = null_value
-            out.point_data[name] = values
+            out_data[name] = values
         if where is not None:
-            out.point_data['vtkValidPointMask'] = where.astype(np.uint8)
+            out_data[f'vtkValid{preference.title()}Mask'] = where.astype(np.uint8)
         return out
 
     def _execute_kwargs(self, backend: str | None, n_closest_points: int | None) -> dict:
