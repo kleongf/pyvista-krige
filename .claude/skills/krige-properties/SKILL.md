@@ -26,7 +26,7 @@ Use it for any change to these files and functions, and for any PR that implemen
 | `test_prop_decluster.py` (#6) | Weights are positive, sum to n, follow the samples when shuffled, and are all 1 on a lattice with cell size equal to the spacing. | `KrigeAccessor.decluster` |
 | `test_prop_save_load.py` (#7) | A loaded model predicts bit for bit like the saved one. | `KrigingModel.save`, `KrigingModel.load` |
 | `test_prop_grid_io.py` (#8) | Writing then reading a grid returns the same geometry, NaN pattern and values. | `write_esri_ascii`, `read_esri_ascii`, `write_zmap`, `read_zmap` |
-| `test_prop_simulate.py` (#9) | Every realization equals the data at the samples; the same seed repeats exactly. | `KrigingModel.simulate` |
+| `test_prop_simulate.py` (#9) | Every realization equals the data at the samples; the same seed repeats exactly and another seed differs; a target point listed twice gets one value. | `KrigingModel.simulate` |
 
 A module for a planned feature skips with the issue number until the feature exists. It finds the feature by name: `fit(transform=...)`, the `preference` parameter of `predict`, `KrigingModel.suggest_samples`, `KrigeAccessor.decluster`, `KrigingModel.load`, `pyvista_krige.read_esri_ascii` and `read_zmap`, and `KrigingModel.simulate`. The tests use the API written in each issue. If you implement it under a different name or array name, update the module in the same PR. Do not leave it skipping.
 
@@ -92,7 +92,8 @@ Last confirmed against commit `d3bbda7` (`main`, v0.1.0). At that commit:
 - The unchanged code passed 128 checks.
 - 100 seeds passed with no findings.
 - The planned-feature modules for #3, #4, #6 and #7 were checked against throwaway reference implementations, and one deliberate bug per check made them fail.
-- The modules for #2, #8 and #9 have not yet been seen to fail. The PR that implements each one must do that, as described in the previous section.
+- The module for #9 was seen to fail under the `sim-skips-earlier-nodes` mutant when `simulate` landed.
+- The modules for #2 and #8 have not yet been seen to fail. The PR that implements each one must do that, as described in the previous section.
 
 When a change edits the covered code above:
 1. Rerun the suite and `mutants.sh`.

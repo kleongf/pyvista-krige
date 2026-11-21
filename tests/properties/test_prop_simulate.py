@@ -44,3 +44,17 @@ def test_the_same_seed_gives_the_same_realizations(cases, seed):
     for a, b in zip(first, again, strict=True):
         np.testing.assert_array_equal(a, b)
     assert any(not np.allclose(a, b) for a, b in zip(first, other, strict=True)), f'{seed=}'
+
+
+def test_coincident_target_points_get_one_value(cases, seed):
+    """A realization is one field, so a point listed twice is simulated once.
+
+    The second copy is conditioned on the first, earlier in the path or later.
+    """
+    samples = cases.samples(seed, 2)
+    model = cases.fit(samples, seed)
+    nodes = cases.grid(samples, seed, 2).points
+    order = np.random.default_rng(seed).permutation(len(nodes))
+    target = pv.PolyData(np.vstack([nodes, nodes[order]]))
+    for run in _realizations(model.simulate(target, n=2, seed=seed)):
+        np.testing.assert_array_equal(run[len(nodes) :], run[order], err_msg=f'{seed=}')

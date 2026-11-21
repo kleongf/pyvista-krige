@@ -16,6 +16,7 @@ from pyvista_krige._advanced import imply_drift_terms
 from pyvista_krige._advanced import resolve_dim
 from pyvista_krige._advanced import translate_drift
 from pyvista_krige._anisotropy import estimate_anisotropy
+from pyvista_krige._simulate import simulate
 from pyvista_krige._suggest import pick_samples
 from pyvista_krige._targets import cell_centers
 from pyvista_krige._targets import execute_on
@@ -489,6 +490,111 @@ class KrigingModel:
 
         """
         return pick_samples(self, target, n, where=where, min_spacing=min_spacing)
+
+    def simulate(
+        self,
+        target: pv.DataSet,
+        n: int,
+        *,
+        seed: int | np.random.Generator | None = None,
+        n_neighbors: int = 16,
+        summary: bool = False,
+        exceed: float | None = None,
+    ) -> pv.DataSet:
+        """Draw ``n`` conditional realizations onto the points of ``target``.
+
+        Kriging gives one smooth surface. A realization is one equally likely
+        field that varies like the data and equals the samples at their
+        locations. Many realizations, summarized point by point, give a mean,
+        percentiles and exceedance probabilities that do not assume normal
+        errors in the original units.
+
+        Uses sequential Gaussian simulation in normal score space. The target
+        points are visited in a random path. Each is kriged from its
+        ``n_neighbors`` nearest samples and earlier points by ordinary kriging,
+        drawn from the normal distribution of that estimate and variance, and
+        added as conditioning data. Each realization is then back-transformed to
+        the original units.
+
+        Parameters
+        ----------
+        target : pyvista.DataSet
+            Dataset whose points are simulated. It is not modified.
+
+        n : int
+            Number of realizations.
+
+        seed : int | numpy.random.Generator, optional
+            Seed for the random path and draws. The same seed gives the same
+            realizations.
+
+        n_neighbors : int, default: 16
+            Number of nearest samples and earlier points each point is kriged
+            from, in PyKrige's anisotropy-adjusted coordinates.
+
+        summary : bool, default: False
+            Write ``'<scalars> mean'``, ``'<scalars> P10'``, ``'<scalars> P50'``
+            and ``'<scalars> P90'`` instead of the realizations.
+
+        exceed : float, optional
+            Write the fraction of realizations above this value as
+            ``'P(<scalars> > <exceed>)'`` instead of the realizations.
+
+        Returns
+        -------
+        pyvista.DataSet
+            Copy of ``target`` with the realizations as point arrays
+            ``'<scalars> realization 0'`` to ``'<scalars> realization <n - 1>'``,
+            or the summaries asked for.
+
+        Raises
+        ------
+        TypeError
+            If ``target`` is a :class:`pyvista.MultiBlock`.
+
+        ValueError
+            If the model is universal or uses geographic coordinates, or ``n`` or
+            ``n_neighbors`` is less than 1.
+
+        Notes
+        -----
+        A model fitted with ``transform='normal_score'`` is simulated with its
+        transform and variogram. Any other model gets a normal score transform
+        fitted to its samples, and its variogram divided by the variance of the
+        kriged sample values so that it applies to unit-variance scores.
+
+        All realizations share one random path, so each point's kriging weights
+        are solved once and extra realizations cost little. Target points at a
+        sample take the sample value, with or without a nugget.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> import pyvista as pv
+        >>> rng = np.random.default_rng(0)
+        >>> samples = pv.PolyData(rng.uniform(0, 10, (30, 3)) * [1, 1, 0])
+        >>> samples['grade'] = np.exp(
+        ...     samples.points[:, 0] / 5 + rng.normal(0, 0.3, 30)
+        ... )
+        >>> model = samples.krige.fit('grade', variogram_model='exponential')
+        >>> grid = pv.ImageData(dimensions=(20, 20, 1), spacing=(0.5, 0.5, 1))
+        >>> result = model.simulate(grid, n=10, seed=0)
+        >>> result['grade realization 9'].shape
+        (400,)
+        >>> summary = model.simulate(grid, n=100, seed=0, summary=True)
+        >>> bool(np.all(summary['grade P10'] <= summary['grade P90']))
+        True
+
+        """
+        return simulate(
+            self,
+            target,
+            n,
+            seed=seed,
+            n_neighbors=n_neighbors,
+            summary=summary,
+            exceed=exceed,
+        )
 
     def save(self, path: str | os.PathLike) -> None:
         """Save this fitted model to a ``.npz`` file.
